@@ -64,6 +64,45 @@ def RPE_frame_st_coder(s0: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     return LARc, residual
 
 
+def RPE_subframe_slt_lte(
+    d: np.ndarray,
+    prev_d: np.ndarray
+) -> Tuple[int, float]:
+    """
+    Estimate the pitch period (N) and gain factor (b) for a subframe.
+
+    :param d: np.ndarray - Current subframe residual signal (40 samples).
+    :param prev_d: np.ndarray - Previous residual signal (120 samples).
+    :return: Tuple[int, float] - Estimated pitch period (N) and gain factor (b).
+    """
+    # Validate inputs
+    if len(d) != 40:
+        raise ValueError("Current subframe d must have 40 samples.")
+    if len(prev_d) != 120:
+        raise ValueError("Previous residual prev_d must have 120 samples.")
+
+    # Pitch period search range
+    pitch_min = 40
+    pitch_max = 120
+
+    # Step 1: Compute cross-correlation for the pitch period range
+    cross_corr = []
+    for N in range(pitch_min, pitch_max + 1):
+        # Compute cross-correlation between d and delayed prev_d
+        corr = np.sum(d * prev_d[-N:][:40])  # Correlation for delay N
+        cross_corr.append(corr)
+
+    # Step 2: Find the pitch period N with the maximum cross-correlation
+    N_opt = np.argmax(cross_corr) + pitch_min  # Add pitch_min to offset index
+
+    # Step 3: Calculate the gain factor b
+    num = np.sum(d * prev_d[-N_opt:][:40])  # Numerator: energy of alignment
+    den = np.sum(prev_d[-N_opt:][:40] ** 2)  # Denominator: energy of prev_d
+    b_opt = num / den if den != 0 else 0.0  # Prevent division by zero
+
+    return N_opt, b_opt
+
+
 def RPE_frame_slt_coder(
     s0: np.ndarray,
     prev_frame_st_resd: np.ndarray
@@ -75,58 +114,55 @@ def RPE_frame_slt_coder(
     :param prev_frame_st_resd: np.ndarray - Residual from the previous frame (160 samples).
     :return: Tuple containing:
         - LARc: Quantized LAR coefficients.
-        - Nc: Estimated pitch period.
+        - Nc: Estimated pitch periods for all subframes.
         - bc: Quantized gain factors for all subframes.
         - curr_frame_ex_full: Full prediction residual for the current frame.
         - curr_frame_st_resd: Residual after short-term analysis.
     """
-    # Step 1: Short-Term Analysis (reuse existing function)
+    # Step 1: Short-Term Analysis (reuse provided function)
     LARc, curr_frame_st_resd = RPE_frame_st_coder(s0)
 
     # Step 2: Long-Term Analysis
     frame_length = 160
     subframe_length = 40
-    Nc_values = range(40, 121)  # Pitch range (as per ETSI)
-    curr_frame_ex_full = np.zeros_like(curr_frame_st_resd)
-    bc_quantized = []
     Nc_values_opt = []
+    bc_values_opt = []
+    curr_frame_ex_full = np.zeros(frame_length)
 
-    # Decision levels (DLB) and quantized levels (b_c)
-    DLB = [0.2, 0.5, 0.8]
-    b_c = [0.1, 0.35, 0.65, 1.0]
-
-    for i in range(0, frame_length, subframe_length):
+    for subframe_start in range(0, frame_length, subframe_length):
         # Current subframe
-        curr_subframe = curr_frame_st_resd[i:i + subframe_length]
-        prev_subframes = prev_frame_st_resd[i:i + subframe_length + 120]
+        curr_subframe = curr_frame_st_resd[subframe_start:subframe_start + subframe_length]
+        prev_window = prev_frame_st_resd[max(
+            0, subframe_start - 120):subframe_start + subframe_length]
 
-        # Pitch period estimation (maximize cross-correlation)
-        cross_corr = [
-            np.sum(curr_subframe * prev_subframes[j:j + subframe_length])
-            for j in Nc_values
-        ]
-        Nc = Nc_values[np.argmax(cross_corr)]
-        Nc_values_opt.append(Nc)
+        # Call RPE_subframe_slt_lte to estimate N and b
+        N, b = RPE_subframe_slt_lte(curr_subframe, prev_window)
 
-        # Gain factor estimation
-        b_num = np.sum(curr_subframe * prev_subframes[Nc:Nc + subframe_length])
-        b_den = np.sum(prev_subframes[Nc:Nc + subframe_length] ** 2)
-        b = b_num / b_den if b_den != 0 else 0.0
-
-        # Quantize b using decision levels and quantized levels
+        # Quantize gain factor (b)
+        DLB = [0.2, 0.5, 0.8]
+        b_c = [0.1, 0.35, 0.65, 1.0]
         if b < DLB[0]:
-            bc = b_c[0]
+            b_quantized = b_c[0]
         elif b < DLB[1]:
-            bc = b_c[1]
+            b_quantized = b_c[1]
         elif b < DLB[2]:
-            bc = b_c[2]
+            b_quantized = b_c[2]
         else:
-            bc = b_c[3]
-        bc_quantized.append(bc)
+            b_quantized = b_c[3]
+
+        Nc_values_opt.append(N)
+        bc_values_opt.append(b_quantized)
 
         # Prediction residual computation
-        predicted = bc * prev_subframes[Nc:Nc + subframe_length]
+        predicted = np.zeros(subframe_length)
+        for n in range(subframe_length):
+            if n - N >= 0:
+                predicted[n] = b_quantized * \
+                    curr_frame_st_resd[subframe_start + n - N]
+            else:
+                predicted[n] = 0.0
         residual = curr_subframe - predicted
-        curr_frame_ex_full[i:i + subframe_length] = residual
+        curr_frame_ex_full[subframe_start:subframe_start +
+                           subframe_length] = residual
 
-    return np.array(LARc), Nc_values_opt, np.array(bc_quantized), curr_frame_ex_full, curr_frame_st_resd
+    return np.array(LARc), np.array(Nc_values_opt), np.array(bc_values_opt), curr_frame_ex_full, curr_frame_st_resd
