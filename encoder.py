@@ -67,16 +67,16 @@ def RPE_frame_st_coder(s0: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
 def RPE_frame_slt_coder(
     s0: np.ndarray,
     prev_frame_st_resd: np.ndarray
-) -> Tuple[np.ndarray, int, float, np.ndarray, np.ndarray]:
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
-    Short-term and long-term coder for a single frame of voice data.
+    Short-term and long-term coder for a single frame of voice data with quantized LTP gain.
 
     :param s0: np.ndarray - 160 samples of the input voice signal.
     :param prev_frame_st_resd: np.ndarray - Residual from the previous frame (160 samples).
     :return: Tuple containing:
         - LARc: Quantized LAR coefficients.
         - Nc: Estimated pitch period.
-        - bc: Gain factor.
+        - bc: Quantized gain factors for all subframes.
         - curr_frame_ex_full: Full prediction residual for the current frame.
         - curr_frame_st_resd: Residual after short-term analysis.
     """
@@ -84,13 +84,16 @@ def RPE_frame_slt_coder(
     LARc, curr_frame_st_resd = RPE_frame_st_coder(s0)
 
     # Step 2: Long-Term Analysis
-    # Initialize parameters
     frame_length = 160
     subframe_length = 40
     Nc_values = range(40, 121)  # Pitch range (as per ETSI)
     curr_frame_ex_full = np.zeros_like(curr_frame_st_resd)
-    bc_values = []
+    bc_quantized = []
     Nc_values_opt = []
+
+    # Decision levels (DLB) and quantized levels (b_c)
+    DLB = [0.2, 0.5, 0.8]
+    b_c = [0.1, 0.35, 0.65, 1.0]
 
     for i in range(0, frame_length, subframe_length):
         # Current subframe
@@ -108,17 +111,22 @@ def RPE_frame_slt_coder(
         # Gain factor estimation
         b_num = np.sum(curr_subframe * prev_subframes[Nc:Nc + subframe_length])
         b_den = np.sum(prev_subframes[Nc:Nc + subframe_length] ** 2)
-        bc = b_num / b_den if b_den != 0 else 0.0
-        bc_values.append(bc)
+        b = b_num / b_den if b_den != 0 else 0.0
+
+        # Quantize b using decision levels and quantized levels
+        if b < DLB[0]:
+            bc = b_c[0]
+        elif b < DLB[1]:
+            bc = b_c[1]
+        elif b < DLB[2]:
+            bc = b_c[2]
+        else:
+            bc = b_c[3]
+        bc_quantized.append(bc)
 
         # Prediction residual computation
         predicted = bc * prev_subframes[Nc:Nc + subframe_length]
         residual = curr_subframe - predicted
         curr_frame_ex_full[i:i + subframe_length] = residual
 
-    # Finalize outputs
-    # Return per-subframe pitch periods (array or aggregated)
-    Nc_final = Nc_values_opt
-    bc_final = np.mean(bc_values)  # Use average gain factor for simplicity
-
-    return np.array(LARc), Nc_final, bc_final, curr_frame_ex_full, curr_frame_st_resd
+    return np.array(LARc), Nc_values_opt, np.array(bc_quantized), curr_frame_ex_full, curr_frame_st_resd
