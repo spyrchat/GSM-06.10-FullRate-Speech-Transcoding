@@ -11,6 +11,47 @@ from scipy.signal import lfilter
 import numpy as np
 
 
+def dequantize_gain_factor(b_c: int) -> float:
+    """
+    Dequantize the quantized gain factor (b_c) to the corresponding decoded value (b_j').
+
+    :param b_c: int - Quantized gain factor index (0, 1, 2, 3).
+    :return: float - Dequantized gain factor (b_j').
+    """
+    # Quantization levels from Table 3.3
+    QLB = [0.10, 0.35, 0.65, 1.00]  # Dequantized values
+
+    # Ensure b_c is a valid index
+    if not (0 <= b_c < len(QLB)):
+        raise ValueError(f"Invalid quantized gain factor index: {
+                         b_c}. Expected values: 0, 1, 2, or 3.")
+
+    # Return the corresponding dequantized value
+    return QLB[b_c]
+
+
+def quantize_gain_factor(b: float) -> float:
+    """
+    Quantize the gain factor (b) based on defined thresholds.
+
+    :param b: float - The gain factor to quantize.
+    :return: float - The quantized gain factor.
+    """
+    # Decision thresholds and corresponding quantized levels
+    DLB = [0.2, 0.5, 0.8]  # Decision Level Boundaries
+    b_c = [0.1, 0.35, 0.65, 1.0]  # Quantized values
+
+    # Determine the quantized gain factor
+    if b < DLB[0]:
+        return b_c[0]
+    elif b < DLB[1]:
+        return b_c[1]
+    elif b < DLB[2]:
+        return b_c[2]
+    else:
+        return b_c[3]
+
+
 def decode_reflection_coeffs(LAR_decoded: np.ndarray) -> np.ndarray:
     """
     Decode LAR' coefficients to reflection coefficients r'(i) using GSM 06.10 (equation 3.5).
@@ -259,26 +300,18 @@ def RPE_frame_slt_coder(
         N, b = RPE_subframe_slt_lte(curr_subframe, prev_d)
 
         # Quantize gain factor (b)
-        DLB = [0.2, 0.5, 0.8]
-        b_c = [0.1, 0.35, 0.65, 1.0]
-        if b < DLB[0]:
-            b_quantized = b_c[0]
-        elif b < DLB[1]:
-            b_quantized = b_c[1]
-        elif b < DLB[2]:
-            b_quantized = b_c[2]
-        else:
-            b_quantized = b_c[3]
-
-        Nc_values_opt.append(N)
+        b_quantized = quantize_gain_factor(b)
+        N_quantized = N
+        Nc_values_opt.append(N_quantized)
         bc_values_opt.append(b_quantized)
-
+        b_dequantized = dequantize_gain_factor(b_quantized)
+        N_dequantized = N_quantized
         # Prediction residual computation
         predicted = np.zeros(subframe_length)
         for n in range(subframe_length):
-            if n - N >= 0:
-                predicted[n] = b_quantized * \
-                    curr_frame_st_resd[subframe_start + n - N]
+            if n - N_dequantized >= 0:
+                predicted[n] = b_dequantized * \
+                    curr_frame_st_resd[subframe_start + n - N_dequantized]
             else:
                 predicted[n] = 0.0
         residual = curr_subframe - predicted
