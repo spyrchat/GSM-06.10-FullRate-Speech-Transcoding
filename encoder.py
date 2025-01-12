@@ -1,3 +1,4 @@
+from bitstring import BitStream, Bits
 import numpy as np
 from scipy.signal import lfilter
 from typing import Tuple
@@ -130,13 +131,15 @@ def RPE_frame_slt_coder(
     curr_frame_ex_full = np.zeros(frame_length)
 
     for subframe_start in range(0, frame_length, subframe_length):
-        # Current subframe
         curr_subframe = curr_frame_st_resd[subframe_start:subframe_start + subframe_length]
-        prev_window = prev_frame_st_resd[max(
-            0, subframe_start - 120):subframe_start + subframe_length]
+
+        prev_d = np.zeros(120)  # Ensure 120 samples
+        start_idx = max(0, subframe_start - 120)
+        end_idx = subframe_start
+        prev_d[-(end_idx - start_idx):] = prev_frame_st_resd[start_idx:end_idx]
 
         # Call RPE_subframe_slt_lte to estimate N and b
-        N, b = RPE_subframe_slt_lte(curr_subframe, prev_window)
+        N, b = RPE_subframe_slt_lte(curr_subframe, prev_d)
 
         # Quantize gain factor (b)
         DLB = [0.2, 0.5, 0.8]
@@ -168,20 +171,22 @@ def RPE_frame_slt_coder(
     return np.array(LARc), np.array(Nc_values_opt), np.array(bc_values_opt), curr_frame_ex_full, curr_frame_st_resd
 
 
-def RPE_frame_coder(
-    s0: np.ndarray,
-    prev_frame_resd: np.ndarray
-) -> Tuple[str, np.ndarray]:
+def RPE_frame_coder(s0: np.ndarray, prev_frame_resd: np.ndarray) -> Tuple[str, np.ndarray]:
     """
-    Encoder for a single frame of voice data.
-
-    :param s0: np.ndarray - Input voice signal (160 samples).
-    :param prev_frame_resd: np.ndarray - Residual signal from the previous frame.
-    :return: Tuple[str, np.ndarray] - Encoded bitstream for the frame and the current residual.
+    Encode a single frame into a bitstream using bitstring.
     """
-    # Perform short-term and long-term encoding steps
-    # Placeholder: Replace with actual encoder logic
-    frame_bit_stream = ''.join(np.random.choice(['0', '1'], size=260))
-    curr_frame_resd = np.random.random(160)  # Placeholder residual calculation
+    # Use RPE_frame_slt_coder for short-term and long-term analysis
+    LARc, Nc, bc, curr_frame_ex_full, curr_frame_st_resd = RPE_frame_slt_coder(
+        s0, prev_frame_resd)
 
-    return frame_bit_stream, curr_frame_resd
+    # Step 3: Create the bitstream
+    bitstream = BitStream()
+    for lar in LARc:
+        bitstream.append(f"int:8={lar}")  # 8 bits for LAR coefficients
+
+    for n, b in zip(Nc, bc):
+        bitstream.append(f"uint:7={n}")   # 7 bits for pitch period
+        # 4 bits for quantized gain factor index
+        bitstream.append(f"uint:4={int(b * 15)}")
+
+    return bitstream.bin, curr_frame_st_resd

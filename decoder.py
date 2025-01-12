@@ -1,3 +1,4 @@
+from bitstring import BitStream
 import numpy as np
 from scipy.signal import lfilter
 from hw_utils import reflection_coeff_to_polynomial_coeff
@@ -124,3 +125,33 @@ def RPE_frame_decoder(
     curr_frame_resd = np.random.random(160)  # Placeholder residual calculation
 
     return s0, curr_frame_resd
+
+
+def RPE_frame_decoder(frame_bit_stream: str, prev_frame_resd: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Decode a bitstream into a single frame of audio.
+    """
+    # Step 1: Parse the bitstream
+    bitstream = BitStream(bin=frame_bit_stream)
+    LARc = [bitstream.read('int:8')
+            for _ in range(8)]  # Read 8 LAR coefficients
+
+    Nc, bc = [], []
+    for _ in range(4):  # 4 subframes
+        Nc.append(bitstream.read('uint:7'))  # 7 bits for pitch period
+        bc.append(bitstream.read('uint:4') / 15.0)  # Scale back gain factor
+
+    # Step 2: Reconstruct the signal
+    frame_length = 160
+    subframe_length = 40
+    reconstructed_residual = np.zeros(frame_length)
+    for subframe_start, N, b in zip(range(0, frame_length, subframe_length), Nc, bc):
+        prev_residual = prev_frame_resd[max(
+            0, subframe_start - 120):subframe_start]
+        for n in range(subframe_length):
+            reconstructed_residual[subframe_start + n] = b * \
+                prev_residual[n - N] if n - N >= 0 else 0
+
+    # Short-term decoding
+    s0 = RPE_frame_st_decoder(np.array(LARc), reconstructed_residual)
+    return s0, reconstructed_residual
