@@ -133,10 +133,13 @@ def RPE_frame_slt_coder(
     for subframe_start in range(0, frame_length, subframe_length):
         curr_subframe = curr_frame_st_resd[subframe_start:subframe_start + subframe_length]
 
-        prev_d = np.zeros(120)  # Ensure 120 samples
+        prev_d = np.zeros(120)  # Initialize with zeros
         start_idx = max(0, subframe_start - 120)
-        end_idx = subframe_start
-        prev_d[-(end_idx - start_idx):] = prev_frame_st_resd[start_idx:end_idx]
+        slice_length = subframe_start - start_idx
+
+        # Fill the last `slice_length` elements of `prev_d` with valid data
+        if slice_length > 0:
+            prev_d[-slice_length:] = prev_frame_st_resd[start_idx:subframe_start]
 
         # Call RPE_subframe_slt_lte to estimate N and b
         N, b = RPE_subframe_slt_lte(curr_subframe, prev_d)
