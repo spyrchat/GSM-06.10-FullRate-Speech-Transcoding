@@ -1,3 +1,4 @@
+import matplotlib.pyplot as plt
 from scipy.io import wavfile
 import numpy as np
 from encoder import RPE_frame_coder
@@ -6,7 +7,7 @@ from decoder import RPE_frame_decoder
 
 def process_wav_file(input_file: str, output_file: str):
     samplerate, data = wavfile.read(input_file)
-
+    data = data.astype(np.int16)
     # Ensure mono audio for simplicity
     if data.ndim > 1:
         data = data[:, 0]
@@ -31,4 +32,24 @@ def process_wav_file(input_file: str, output_file: str):
     # Convert back to int16 for WAV compatibility
     reconstructed_signal = np.clip(
         reconstructed_signal, -32768, 32767).astype(np.int16)
+
+    # Save the output file
     wavfile.write(output_file, samplerate, reconstructed_signal)
+
+    # Plot the waveforms
+    plt.figure(figsize=(12, 6))
+
+    plt.subplot(2, 1, 1)
+    plt.plot(data)
+    plt.title('Input WAV File')
+    plt.xlabel('Sample')
+    plt.ylabel('Amplitude')
+
+    plt.subplot(2, 1, 2)
+    plt.plot(reconstructed_signal)
+    plt.title('Output WAV File')
+    plt.xlabel('Sample')
+    plt.ylabel('Amplitude')
+
+    plt.tight_layout()
+    plt.show()

@@ -8,6 +8,58 @@ from hw_utils import reflection_coeff_to_polynomial_coeff, polynomial_coeff_to_r
 import numpy as np
 from scipy.signal import lfilter
 
+import numpy as np
+
+
+def decode_reflection_coeffs(LAR_decoded: np.ndarray) -> np.ndarray:
+    """
+    Decode LAR' coefficients to reflection coefficients r'(i) using GSM 06.10 (equation 3.5).
+
+    :param LAR_decoded: np.ndarray - Decoded Log-Area Ratios (LAR'(i)).
+    :return: np.ndarray - Reflection coefficients r'(i).
+    """
+    reflection_coeffs = np.zeros_like(LAR_decoded)
+
+    for i, LAR_prime in enumerate(LAR_decoded):
+        abs_LAR = abs(LAR_prime)
+        sign_LAR = np.sign(LAR_prime)  # Sign of LAR'(i)
+
+        if abs_LAR < 0.675:
+            reflection_coeffs[i] = LAR_prime  # Case 1: |LAR'(i)| < 0.675
+        elif 0.675 <= abs_LAR < 1.225:
+            reflection_coeffs[i] = sign_LAR * \
+                (0.500 * abs_LAR + 0.3375)  # Case 2
+        elif 1.225 <= abs_LAR <= 1.625:
+            reflection_coeffs[i] = sign_LAR * \
+                (0.125 * abs_LAR + 0.796875)  # Case 3
+        else:
+            raise ValueError(f"Invalid LAR'(i) value: {
+                             LAR_prime}. Expected |LAR'(i)| <= 1.625.")
+
+    return reflection_coeffs
+
+
+def decode_LAR(LARc: np.ndarray) -> np.ndarray:
+    """
+    Decode quantized Log-Area Ratios (LAR_C) to LAR'' using predefined A and B values.
+
+    :param LARc: np.ndarray - Quantized Log-Area Ratios (LAR_C).
+    :return: np.ndarray - Decoded Log-Area Ratios (LAR'').
+    """
+    # Constants from GSM 06.10
+    A = np.array([20, 20, 20, 20, 13.637, 15, 8.334, 8.824])
+    B = np.array([0, 0, -16, -16, -8, -4, -2, -1])
+
+    # Ensure LARc has the correct length
+    if len(LARc) != len(A):
+        raise ValueError(f"LARc has incorrect length: {
+                         len(LARc)}. Expected: {len(A)}")
+
+    # Decode LAR coefficients
+    LAR_decoded = (LARc - B) / A
+
+    return LAR_decoded
+
 
 def quantize_LAR(LAR: np.ndarray) -> np.ndarray:
     """
@@ -22,9 +74,18 @@ def quantize_LAR(LAR: np.ndarray) -> np.ndarray:
     LAR_min = np.array([-32, -32, -16, -16, -8, -4, -2, -1])
     LAR_max = np.array([31, 31, 15, 15, 7, 3, 1, 0])
 
+    # Ensure the input LAR has the correct length
+    if len(LAR) != len(A):
+        raise ValueError(f"LAR has incorrect length: {
+                         len(LAR)}. Expected: {len(A)}")
+
     # Quantization rule
     LARq = np.zeros_like(LAR, dtype=int)
     for i in range(len(LAR)):
+        # Validate LAR[i]
+        if np.isnan(LAR[i]) or np.isinf(LAR[i]):
+            raise ValueError(f"LAR[{i}] is invalid: {LAR[i]}")
+
         # Apply the linear transformation
         LARq[i] = int(A[i] * LAR[i] + B[i] + 0.5)  # Round to nearest integer
 
@@ -34,33 +95,86 @@ def quantize_LAR(LAR: np.ndarray) -> np.ndarray:
     return LARq
 
 
+def calculate_LAR(reflection_coeffs: np.ndarray) -> np.ndarray:
+    """
+    Calculate the Log-Area Ratios (LAR) from reflection coefficients (r(i)).
+
+    :param reflection_coeffs: np.ndarray - Reflection coefficients (r(i)).
+    :return: np.ndarray - Log-Area Ratios (LAR).
+    """
+    LAR = np.zeros_like(reflection_coeffs)
+
+    for i, r in enumerate(reflection_coeffs):
+        abs_r = abs(r)
+        sign_r = np.sign(r)  # Sign of r(i)
+
+        if abs_r < 0.675:
+            LAR[i] = r  # Case 1: |r(i)| < 0.675
+        elif 0.675 <= abs_r < 0.950:
+            # Case 2: 0.675 <= |r(i)| < 0.950
+            LAR[i] = sign_r * (2 * abs_r - 0.675)
+        elif 0.950 <= abs_r <= 1.000:
+            # Case 3: 0.950 <= |r(i)| <= 1.000
+            LAR[i] = sign_r * (8 * abs_r - 6.375)
+        else:
+            raise ValueError(f"Invalid reflection coefficient r(i) = {
+                             r}. Expected |r(i)| <= 1.")
+
+    return LAR
+
+
 def RPE_frame_st_coder(s0: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Short-term coder for a single frame of voice data with LAR quantization.
+    Short-term coder for a single frame of voice data with LAR quantization, offset compensation, and preemphasis.
 
     :param s0: np.ndarray - 160 samples of the input voice signal.
     :return: Tuple[np.ndarray, np.ndarray] - Quantized LAR coefficients, Prediction residual.
     """
-    # Step 1: Preprocessing (Offset compensation and pre-emphasis)
-    s_preemphasized = lfilter([1, -0.9375], [1], s0)  # Pre-emphasis filter
+    # Step 1: Offset Compensation
+    alpha = 32735 * (2 ** -15)  # Offset compensation coefficient
+    s_offset_compensated = np.zeros(s0.shape)
+    for k in range(len(s0)):
+        s_offset_compensated[k] = (
+            s0[k]
+            - (s0[k - 1] if k > 0 else 0)  # Previous input sample
+            # Previous output
+            + alpha * (s_offset_compensated[k - 1] if k > 0 else 0)
+        )
 
-    # Step 2: Compute LPC coefficients (order 8)
-    autocorr = np.correlate(s_preemphasized, s_preemphasized, mode='full')
-    autocorr = autocorr[len(s_preemphasized) - 1:]  # Keep only positive lags
-    lpc_order = 8
-    R = autocorr[:lpc_order + 1]
-    a, e_final = reflection_coeff_to_polynomial_coeff(R[1:] / R[0])
+    # Step 2: Preemphasis Filtering
+    beta = 28180 * (2 ** -15)  # Preemphasis coefficient
+    s_preemphasized = np.zeros(s_offset_compensated.shape)
+    for k in range(len(s_offset_compensated)):
+        s_preemphasized[k] = (
+            s_offset_compensated[k]
+            - beta * (s_offset_compensated[k - 1] if k > 0 else 0)
+        )
+    # Step 3: Compute LPC coefficients (order 8)
+    p = 8
+    ACF = np.zeros(p + 1)
+    for k in range(p + 1):
+        ACF[k] = np.sum(s_preemphasized[k:] *
+                        s_preemphasized[:len(s_preemphasized) - k])
+    R = np.zeros((p, p))
+    for i in range(p):
+        for j in range(p):
+            R[i, j] = ACF[np.abs(i - j)]
+    r = ACF[1:p + 1]
+    w = np.linalg.solve(R, r)
 
-    # Step 3: Convert LPC coefficients to reflection coefficients and LAR
-    reflection_coeffs = polynomial_coeff_to_reflection_coeff(a)
-    LAR = np.log((1 + reflection_coeffs) / (1 - reflection_coeffs))
+    w_new = [1] + [-wi for wi in w]
+    w_new = np.array(w_new)
+    # Step 4: Convert LPC coefficients to reflection coefficients and LAR
+    reflection_coeffs = polynomial_coeff_to_reflection_coeff(w_new)
+    print(reflection_coeffs)
+    LAR = calculate_LAR(reflection_coeffs)
 
-    # Step 4: Quantize LAR coefficients using ETSI/GSM rules
+    # Step 5: Quantize LAR coefficients using ETSI/GSM rules
     LARc = quantize_LAR(LAR)
-
-    # Step 5: Calculate residual d'(n)
-    prediction = lfilter([1] + [-ai for ai in a[1:]], [1], s_preemphasized)
-    residual = s_preemphasized - prediction
+    LAR_new = decode_LAR(LARc)
+    r_new = decode_reflection_coeffs(LAR_new)
+    w_new = reflection_coeff_to_polynomial_coeff(r_new)[0]
+    residual = lfilter(w_new, [1], s_preemphasized)
 
     return LARc, residual
 
