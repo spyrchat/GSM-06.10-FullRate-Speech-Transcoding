@@ -166,3 +166,22 @@ def RPE_frame_slt_coder(
                            subframe_length] = residual
 
     return np.array(LARc), np.array(Nc_values_opt), np.array(bc_values_opt), curr_frame_ex_full, curr_frame_st_resd
+
+
+def RPE_frame_coder(
+    s0: np.ndarray,
+    prev_frame_resd: np.ndarray
+) -> Tuple[str, np.ndarray]:
+    """
+    Encoder for a single frame of voice data.
+
+    :param s0: np.ndarray - Input voice signal (160 samples).
+    :param prev_frame_resd: np.ndarray - Residual signal from the previous frame.
+    :return: Tuple[str, np.ndarray] - Encoded bitstream for the frame and the current residual.
+    """
+    # Perform short-term and long-term encoding steps
+    # Placeholder: Replace with actual encoder logic
+    frame_bit_stream = ''.join(np.random.choice(['0', '1'], size=260))
+    curr_frame_resd = np.random.random(160)  # Placeholder residual calculation
+
+    return frame_bit_stream, curr_frame_resd

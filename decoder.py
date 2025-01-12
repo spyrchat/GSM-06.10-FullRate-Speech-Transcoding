@@ -105,3 +105,22 @@ def RPE_frame_slt_decoder(
     s0 = RPE_frame_st_decoder(LARc, reconstructed_residual)
 
     return s0, reconstructed_residual
+
+
+def RPE_frame_decoder(
+    frame_bit_stream: str,
+    prev_frame_resd: np.ndarray
+) -> Tuple[np.ndarray, np.ndarray]:
+    """
+    Decoder for a single frame of voice data.
+
+    :param frame_bit_stream: str - Encoded bitstream for the frame.
+    :param prev_frame_resd: np.ndarray - Residual signal from the previous frame.
+    :return: Tuple[np.ndarray, np.ndarray] - Reconstructed speech signal and current residual.
+    """
+    # Perform decoding steps to reconstruct the signal
+    # Placeholder: Replace with actual decoder logic
+    s0 = np.random.random(160)  # Placeholder signal reconstruction
+    curr_frame_resd = np.random.random(160)  # Placeholder residual calculation
+
+    return s0, curr_frame_resd
