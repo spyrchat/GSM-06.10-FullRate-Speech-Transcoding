@@ -47,7 +47,3 @@ def process_wav_file(input_file: str, output_file: str):
 
     # Save the reconstructed .wav file
     wavfile.write(output_file, samplerate, reconstructed_data)
-
-
-# Example usage
-process_wav_file("input.wav", "output.wav")
