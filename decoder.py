@@ -3,6 +3,7 @@ import numpy as np
 from scipy.signal import lfilter
 from hw_utils import reflection_coeff_to_polynomial_coeff
 from typing import Tuple
+from encoder import quantize_LAR, decode_LAR, decode_reflection_coeffs
 
 
 def RPE_frame_st_decoder(LARc: np.ndarray, curr_frame_st_resd: np.ndarray) -> np.ndarray:
@@ -13,56 +14,18 @@ def RPE_frame_st_decoder(LARc: np.ndarray, curr_frame_st_resd: np.ndarray) -> np
     :param curr_frame_st_resd: np.ndarray - Prediction residual (d'(n)).
     :return: np.ndarray - Reconstructed voice signal (s0).
     """
-    # Step 1: Decode and interpolate LAR coefficients
-    A = np.array([20, 20, 20, 20, 13.637, 15, 8.334, 8.824])
-    B = np.array([0, 0, -16, -16, -8, -4, -2, -1])
-    LAR = (LARc - B) / A
+    LAR_new = decode_LAR(LARc)
+    r_new = decode_reflection_coeffs(LAR_new)
+    w_new = reflection_coeff_to_polynomial_coeff(r_new)[0]
 
-    # Interpolate LAR coefficients over 4 subframes
-    interpolated_LAR = np.zeros((4, 8))
-    for i in range(8):
-        interpolated_LAR[0, i] = 0.75 * LAR[i] + \
-            0.25 * LAR[i - 1] if i > 0 else LAR[i]
-        interpolated_LAR[1, i] = 0.50 * LAR[i] + \
-            0.50 * LAR[i - 1] if i > 0 else LAR[i]
-        interpolated_LAR[2, i] = 0.25 * LAR[i] + \
-            0.75 * LAR[i - 1] if i > 0 else LAR[i]
-        interpolated_LAR[3, i] = LAR[i]
+    s = lfilter([1], w_new, curr_frame_st_resd)
 
-    # Step 2: Convert interpolated LAR to reflection coefficients for each subframe
-    reflection_coeffs = np.zeros((4, 8))
-    for subframe in range(4):
-        for i in range(8):
-            if abs(interpolated_LAR[subframe, i]) < 0.675:
-                reflection_coeffs[subframe, i] = interpolated_LAR[subframe, i]
-            elif 0.675 <= abs(interpolated_LAR[subframe, i]) < 1.225:
-                reflection_coeffs[subframe, i] = np.sign(
-                    interpolated_LAR[subframe, i]) * (0.5 * abs(interpolated_LAR[subframe, i]) + 0.3375)
-            elif abs(interpolated_LAR[subframe, i]) >= 1.225:
-                reflection_coeffs[subframe, i] = np.sign(
-                    interpolated_LAR[subframe, i]) * (0.125 * abs(interpolated_LAR[subframe, i]) + 0.796875)
-
-    # Step 3: Convert reflection coefficients to LPC coefficients for each subframe
-    LPC_coeffs = np.zeros((4, 9))  # 8 coefficients + 1 for the leading 1
-    for subframe in range(4):
-        LPC_coeffs[subframe, :] = reflection_coeff_to_polynomial_coeff(
-            reflection_coeffs[subframe, :])[0]
-
-    # Step 4: Perform short-term synthesis filtering for the entire frame
-    s_reconstructed = np.zeros_like(curr_frame_st_resd)
-    for subframe in range(4):
-        start = subframe * 40
-        end = start + 40
-        s_reconstructed[start:end] = lfilter(
-            [1], LPC_coeffs[subframe, :], curr_frame_st_resd[start:end])
-
-    # Step 5: Post-processing (deemphasis filter)
     beta = 28180 * (2 ** -15)
-    s0 = np.zeros_like(s_reconstructed)
-    for k in range(len(s_reconstructed)):
-        s0[k] = s_reconstructed[k] + beta * (s0[k - 1] if k > 0 else 0)
-
-    return s0
+    sro = np.zeros(s.shape)
+    for k in range(len(s)):
+        sro[k] = s[k] + beta * (sro[k - 1] if k > 0 else 0)
+    sro = sro.astype(np.int16)
+    return sro
 
 
 def RPE_frame_slt_decoder(
