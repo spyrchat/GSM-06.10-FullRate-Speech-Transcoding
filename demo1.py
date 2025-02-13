@@ -39,7 +39,7 @@ def process_wav_file(input_file: str, output_file: str):
 
     # Save the output file
     wavfile.write(output_file, samplerate, reconstructed_signal)
-
+    print(reconstructed_signal.shape)
     # Plot the waveforms
     plt.figure(figsize=(12, 6))
 

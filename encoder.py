@@ -21,16 +21,10 @@ def dequantize_gain_factor(b_c: int) -> float:
     # Quantization levels from Table 3.3
     QLB = [0.10, 0.35, 0.65, 1.00]  # Dequantized values
 
-    # Ensure b_c is a valid index
-    if not (0 <= b_c < len(QLB)):
-        raise ValueError(f"Invalid quantized gain factor index: {
-                         b_c}. Expected values: 0, 1, 2, or 3.")
-
-    # Return the corresponding dequantized value
     return QLB[b_c]
 
 
-def quantize_gain_factor(b: float) -> float:
+def quantize_gain_factor(b: float) -> int:
     """
     Quantize the gain factor (b) based on defined thresholds.
 
@@ -39,17 +33,16 @@ def quantize_gain_factor(b: float) -> float:
     """
     # Decision thresholds and corresponding quantized levels
     DLB = [0.2, 0.5, 0.8]  # Decision Level Boundaries
-    b_c = [0.1, 0.35, 0.65, 1.0]  # Quantized values
 
     # Determine the quantized gain factor
-    if b < DLB[0]:
-        return b_c[0]
-    elif b < DLB[1]:
-        return b_c[1]
-    elif b < DLB[2]:
-        return b_c[2]
-    else:
-        return b_c[3]
+    if b <= DLB[0]:
+        return 0
+    elif DLB[0] < b <= DLB[1]:
+        return 1
+    elif DLB[1] < b <= DLB[2]:
+        return 2
+    elif b > DLB[2]:
+        return 3
 
 
 def decode_reflection_coeffs(LAR_decoded: np.ndarray) -> np.ndarray:

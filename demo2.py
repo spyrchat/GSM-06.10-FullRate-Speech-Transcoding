@@ -21,21 +21,29 @@ def process_wav_file(input_file: str, output_file: str):
                       mode='constant', constant_values=0)
 
     # Buffers for residuals and output
+    encoded_signal = []
     reconstructed_signal = []
     prev_frame_st_resd = np.zeros(160)
+
     for i in range(0, len(data) // 160):
         frame = data[i*160:(i+1)*160]
         # Encode and decode the frame
         LARc, Nc, bc, curr_frame_ex_full, curr_frame_st_resd = RPE_frame_slt_coder(
             frame, prev_frame_st_resd)
-        reconstructed_frame = RPE_frame_slt_decoder(
-            LARc, Nc, bc, curr_frame_ex_full, curr_frame_st_resd)
 
-        reconstructed_signal.extend(reconstructed_frame)
+        encoded_signal.append(
+            (LARc, Nc, bc, curr_frame_ex_full, curr_frame_st_resd))
 
+    for i in range(0, len(data) // 160):
+        reconstructed_frame, _ = RPE_frame_slt_decoder(
+            *encoded_signal[i])
+
+        reconstructed_signal.append(reconstructed_frame)
     # Convert back to int16 for WAV compatibility
-    reconstructed_signal = np.clip(
-        reconstructed_signal, -32768, 32767).astype(np.int16)
+    # reconstructed_signal = np.clip(
+    #     reconstructed_signal, -32768, 32767).astype(np.int16)
+    reconstructed_signal = np.concat(reconstructed_signal).astype(np.int16)
+    print(reconstructed_signal.shape)
 
     # Save the output file
     wavfile.write(output_file, samplerate, reconstructed_signal)
@@ -51,6 +59,7 @@ def process_wav_file(input_file: str, output_file: str):
 
     plt.subplot(2, 1, 2)
     plt.plot(reconstructed_signal)
+
     plt.title('Output WAV File')
     plt.xlabel('Sample')
     plt.ylabel('Amplitude')
