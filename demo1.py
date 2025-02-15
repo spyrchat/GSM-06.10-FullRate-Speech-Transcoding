@@ -60,4 +60,4 @@ def process_wav_file(input_file: str, output_file: str):
 
 
 if __name__ == '__main__':
-    process_wav_file('ena_dio_tria.wav', 'output.wav')
+    process_wav_file('ena_dio_tria.wav', 'demo_1_output.wav')
