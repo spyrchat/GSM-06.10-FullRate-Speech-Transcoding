@@ -51,55 +51,78 @@ def xm_select(e: np.ndarray) -> tuple[np.ndarray, int]:
     return selected_x_m, selected_M
 
 
-def rpe_quantize(rpe_samples: np.ndarray) -> tuple[np.ndarray, int]:
+def rpe_quantize(x_ms: np.ndarray) -> tuple[np.ndarray, int]:
     """
-    Quantizes the Regular Pulse Excitation (RPE) sequence based on ETSI GSM 06.10.
+    Quantizes the RPE sequence as described in the ETSI GSM 06.10 standard.
 
     Parameters:
-    - rpe_samples (np.ndarray): The input RPE sequence to be quantized.
+    - x_ms: np.ndarray, the RPE sequence to be quantized
 
     Returns:
-    - tuple:
-        - np.ndarray: The 3-bit quantized normalized RPE samples.
-        - int: The index of the quantized maximum amplitude.
+    - x_mcs: np.ndarray, quantized normalized RPE samples
+    - x_maxc: int, quantized x_max
     """
+    # Step 1: Find maximum absolute value x_max
+    x_max = np.max(np.abs(x_ms))
 
-    # Step 1: Determine the maximum absolute value of the RPE sequence
-    max_amplitude = np.max(np.abs(rpe_samples))
+    # Step 2: Quantize x_max
+    x_max_intervals = [
+        (0, 31), (32, 63), (64, 95), (96, 127), (128,
+                                                 159), (160, 191), (192, 223), (224, 255),
+        (256, 287), (288, 319), (320, 351), (352,
+                                             383), (384, 415), (416, 447), (448, 479),
+        (480, 511), (512, 575), (576, 639), (640,
+                                             703), (704, 767), (768, 831), (832, 895),
+        (896, 959), (960, 1023), (1024, 1151), (1152,
+                                                1279), (1280, 1407), (1408, 1535),
+        (1536, 1663), (1664, 1791), (1792, 1919), (1920,
+                                                   2047), (2048, 2303), (2304, 2559),
+        (2560, 2815), (2816, 3071), (3072, 3327), (3328,
+                                                   3583), (3584, 3839), (3840, 4095),
+        (4096, 4607), (4608, 5119), (5120, 5631), (5632,
+                                                   6143), (6144, 6655), (6656, 7167),
+        (7168, 7679), (7680, 8191), (8192, 9215), (9216,
+                                                   10239), (10240, 11263), (11264, 12287),
+        (12288, 13311), (13312, 14335), (14336,
+                                         15359), (15360, 16383), (16384, 18431),
+        (18432, 20479), (20480, 22527), (22528,
+                                         24575), (24576, 26623), (26624, 28671),
+        (28672, 30719), (30720, 32767)
+    ]
 
-    # Step 2: Quantize max_amplitude using predefined intervals (from Table 3.5)
-    quantization_intervals = np.array([
-        31, 63, 95, 127, 159, 191, 223, 255,
-        287, 319, 351, 383, 415, 447, 479, 511,
-        575, 639, 703, 767, 831, 895, 959, 1023,
-        1151, 1279, 1407, 1535, 1663, 1791, 1919,
-        2047, 2303, 2559, 2815, 3071, 3327, 3583,
-        3839, 4095, 4607, 5119, 5631, 6143, 6655,
-        7167, 7679, 8191, 9215, 10239, 11263, 12287,
-        13311, 14335, 15359, 16383, 18431, 20479, 22527,
-        24575, 26623, 28671, 30719, 32767
-    ])
+    x_maxc = None
+    x_max_ = None
 
-    # Find the closest quantized value and its corresponding index
-    quantized_max_index = np.searchsorted(
-        quantization_intervals, max_amplitude, side="right") - 1
-    quantized_max_value = quantization_intervals[quantized_max_index]
+    for i, interval in enumerate(x_max_intervals):
+        if interval[0] <= x_max < interval[1] + 1:
+            x_maxc = i
+            x_max_ = interval[1]
+            break
 
-    # Step 3: Normalize RPE samples
-    normalized_samples = (rpe_samples / quantized_max_value).astype(float)
+    # Step 3: Normalize x_m by x_max_
+    xs = (x_ms / x_max_).astype(float)
 
-    # Step 4: Quantize normalized samples using predefined 3-bit levels (from Table 3.6)
-    quantization_levels = np.array([
-        -28672, -20480, -12288, -4096,  4096, 12288, 20480, 28672
-    ]) / (2**15)  # Scale to match normalization in dequantization
+    # Step 4: Quantize normalized samples using Table 3.6
+    x_mcs = np.zeros_like(xs, dtype=int)
+    for i, x in enumerate(xs):
+        if -32768 / (2**15) <= x < -24576 / (2**15):
+            x_mcs[i] = 0
+        elif -24576 / (2**15) <= x < -16384 / (2**15):
+            x_mcs[i] = 1
+        elif -16384 / (2**15) <= x < -8192 / (2**15):
+            x_mcs[i] = 2
+        elif -8192 / (2**15) <= x < 0:
+            x_mcs[i] = 3
+        elif 0 <= x < 8192 / (2**15):
+            x_mcs[i] = 4
+        elif 8192 / (2**15) <= x < 16384 / (2**15):
+            x_mcs[i] = 5
+        elif 16384 / (2**15) <= x < 24576 / (2**15):
+            x_mcs[i] = 6
+        elif 24576 / (2**15) <= x <= 32767 / (2**15):
+            x_mcs[i] = 7
 
-    quantized_samples = np.zeros_like(normalized_samples, dtype=int)
-
-    for i, sample in enumerate(normalized_samples):
-        quantized_samples[i] = np.searchsorted(
-            quantization_levels, sample, side="right") - 1
-
-    return quantized_samples, quantized_max_index
+    return x_mcs, x_maxc
 
 
 def rpe_dequantize(quantized_samples: np.ndarray, quantized_max_index: int) -> np.ndarray:

@@ -1,9 +1,10 @@
 from bitstring import BitStream
 import numpy as np
 from scipy.signal import lfilter
-from hw_utils import reflection_coeff_to_polynomial_coeff
+from hw_utils import reflection_coeff_to_polynomial_coeff, polynomial_coeff_to_reflection_coeff
 from typing import Tuple
 from encoder import dequantize_gain_factor, quantize_LAR, decode_LAR, decode_reflection_coeffs
+from utils import rpe_dequantize, reconstruct_excitation
 
 
 def RPE_frame_st_decoder(LARc: np.ndarray, curr_frame_st_resd: np.ndarray) -> np.ndarray:
@@ -73,29 +74,60 @@ def RPE_frame_slt_decoder(
 
 def RPE_frame_decoder(frame_bit_stream: str, prev_frame_resd: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Decode a bitstream into a single frame of audio.
+    Decodes a GSM 06.10 RPE-LTP encoded frame from a bitstream.
+
+    Parameters:
+    - frame_bit_stream (str): The binary bitstream representing the encoded frame.
+    - prev_frame_resd (np.ndarray): The residual signal from the previous frame (160 samples).
+
+    Returns:
+    - Tuple[np.ndarray, np.ndarray]: The reconstructed speech signal (s0) and residual signal.
     """
+
     # Step 1: Parse the bitstream
-    bitstream = BitStream(bin=frame_bit_stream)
-    LARc = [bitstream.read('int:8')
-            for _ in range(8)]  # Read 8 LAR coefficients
+    bitstream = BitStream(bin=frame_bit_stream) if isinstance(
+        frame_bit_stream, str) else frame_bit_stream
 
-    Nc, bc = [], []
-    for _ in range(4):  # 4 subframes
-        Nc.append(bitstream.read('uint:7'))  # 7 bits for pitch period
-        bc.append(bitstream.read('uint:4') / 15.0)  # Scale back gain factor
+    # 1a. Extract LPC coefficients (LARc) - used once per frame
+    LARc = [
+        bitstream.read('int:6'), bitstream.read('int:6'),
+        bitstream.read('int:5'), bitstream.read('int:5'),
+        bitstream.read('int:4'), bitstream.read('int:4'),
+        bitstream.read('int:3'), bitstream.read('int:3')
+    ]
 
-    # Step 2: Reconstruct the signal
-    frame_length = 160
+    # 1b. Extract subframe parameters
+    Nc, bc, Mc, x_maxc, x_mcs = [], [], [], [], []
+    num_subframes = 4
     subframe_length = 40
-    reconstructed_residual = np.zeros(frame_length)
-    for subframe_start, N, b in zip(range(0, frame_length, subframe_length), Nc, bc):
-        prev_residual = prev_frame_resd[max(
-            0, subframe_start - 120):subframe_start]
-        for n in range(subframe_length):
-            reconstructed_residual[subframe_start + n] = b * \
-                prev_residual[n - N] if n - N >= 0 else 0
 
-    # Short-term decoding
-    s0 = RPE_frame_st_decoder(np.array(LARc), reconstructed_residual)
+    for _ in range(num_subframes):
+        Nc.append(bitstream.read('uint:7'))  # Pitch lag
+        bc.append(bitstream.read('uint:2'))  # Gain index
+        Mc.append(bitstream.read('uint:2'))  # Grid position
+        x_maxc.append(bitstream.read('uint:6'))  # Maximum quantized value
+        x_mcs.append(np.array([bitstream.read('uint:3')
+                     for _ in range(13)]))  # 13 quantized RPE samples
+
+    # Step 2: Construct the excitation signal
+    excitation_signal = np.zeros(160)
+
+    for j in range(num_subframes):
+        subframe_start = j * subframe_length
+
+        # Dequantize RPE samples
+        x_ms = rpe_dequantize(x_mcs[j], x_maxc[j])
+
+        # Reconstruct excitation signal using grid position Mc
+        excitation = reconstruct_excitation(x_ms, Mc[j])
+
+        # Insert excitation into the full signal
+        excitation_signal[subframe_start:subframe_start +
+                          subframe_length] += excitation
+
+    # Step 3: Call RPE_frame_slt_decoder to perform full synthesis
+    s0, reconstructed_residual = RPE_frame_slt_decoder(
+        LARc, Nc, bc, excitation_signal, prev_frame_resd
+    )
+
     return s0, reconstructed_residual

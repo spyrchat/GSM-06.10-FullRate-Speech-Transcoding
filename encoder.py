@@ -369,4 +369,4 @@ def RPE_frame_coder(s0: np.ndarray, prev_frame_resd: np.ndarray):
         for x_mc in x_mcs:
             frame_bit_stream.append(f'uint:{3}={x_mc}')
 
-    return frame_bit_stream, curr_frame_st_resd
+    return frame_bit_stream.bin, curr_frame_st_resd
