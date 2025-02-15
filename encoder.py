@@ -3,7 +3,7 @@ import numpy as np
 from scipy.signal import lfilter
 from typing import Tuple
 from hw_utils import reflection_coeff_to_polynomial_coeff, polynomial_coeff_to_reflection_coeff
-
+from utils import rpe_dequantize, reconstruct_excitation, rpe_quantize, xm_select
 
 import numpy as np
 from scipy.signal import lfilter
@@ -314,22 +314,59 @@ def RPE_frame_slt_coder(
     return np.array(LARc), np.array(Nc_values_opt), np.array(bc_values_opt), curr_frame_ex_full, curr_frame_st_resd
 
 
-def RPE_frame_coder(s0: np.ndarray, prev_frame_resd: np.ndarray) -> Tuple[str, np.ndarray]:
+def RPE_frame_coder(s0: np.ndarray, prev_frame_resd: np.ndarray):
     """
-    Encode a single frame into a bitstream using bitstring.
+    Encodes a frame using the RPE frame coder.
+
+    Parameters:
+    - s0: np.ndarray, input speech signal (160 samples)
+    - prev_frame_resd: np.ndarray, residual signal from the previous frame (160 samples)
+
+    Returns:
+    - frame_bit_stream: BitStream, 260-bit representation of the frame
+    - curr_frame_resd: np.ndarray, current frame residual signal (160 samples)
     """
-    # Use RPE_frame_slt_coder for short-term and long-term analysis
-    LARc, Nc, bc, curr_frame_ex_full, curr_frame_st_resd = RPE_frame_slt_coder(
+    num_subframes = 4
+    subframe_size = 40
+
+    # Step 1: Encode using RPE_frame_slt_coder
+    LARc, Ncs, bcs, curr_frame_ex_full, curr_frame_st_resd = RPE_frame_slt_coder(
         s0, prev_frame_resd)
 
-    # Step 3: Create the bitstream
-    bitstream = BitStream()
-    for lar in LARc:
-        bitstream.append(f"int:8={lar}")  # 8 bits for LAR coefficients
+    # Step 2: Convert parameters to bitstream
+    frame_bit_stream = BitStream()
 
-    for n, b in zip(Nc, bc):
-        bitstream.append(f"uint:7={n}")   # 7 bits for pitch period
-        # 4 bits for quantized gain factor index
-        bitstream.append(f"uint:4={int(b * 15)}")
+    # Append LARc to bitstream
+    frame_bit_stream.append(f'int:{6}={LARc[0]}')
+    frame_bit_stream.append(f'int:{6}={LARc[1]}')
+    frame_bit_stream.append(f'int:{5}={LARc[2]}')
+    frame_bit_stream.append(f'int:{5}={LARc[3]}')
+    frame_bit_stream.append(f'int:{4}={LARc[4]}')
+    frame_bit_stream.append(f'int:{4}={LARc[5]}')
+    frame_bit_stream.append(f'int:{3}={LARc[6]}')
+    frame_bit_stream.append(f'int:{3}={LARc[7]}')
 
-    return bitstream.bin, curr_frame_st_resd
+    for j in range(num_subframes):
+        # Append Nc to bitstream
+        frame_bit_stream.append(f'uint:{7}={Ncs[j]}')
+
+        # Append bc to bitstream
+        frame_bit_stream.append(f'uint:{2}={bcs[j]}')
+
+        # Select x_m sub-sequence and M from e
+        e = curr_frame_ex_full[(j * subframe_size)
+                                :(j * subframe_size + subframe_size)]
+        x_ms, M = xm_select(e)
+
+        # Quantize x_m and M
+        x_mcs, x_maxc = rpe_quantize(x_ms)
+        Mc = M
+
+        # Append Mc, x_maxc and x_mcs to bitstream
+        frame_bit_stream.append(f'uint:{2}={Mc}')
+        frame_bit_stream.append(f'uint:{6}={x_maxc}')
+
+        for x_mc in x_mcs:
+            frame_bit_stream.append(f'uint:{3}={x_mc}')
+
+    return frame_bit_stream, curr_frame_st_resd
