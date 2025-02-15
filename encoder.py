@@ -314,59 +314,64 @@ def RPE_frame_slt_coder(
     return np.array(LARc), np.array(Nc_values_opt), np.array(bc_values_opt), curr_frame_ex_full, curr_frame_st_resd
 
 
-def RPE_frame_coder(s0: np.ndarray, prev_frame_resd: np.ndarray):
+def RPE_frame_coder(input_speech_frame: np.ndarray, prev_residual_signal: np.ndarray) -> Tuple[str, np.ndarray]:
     """
     Encodes a frame using the RPE frame coder.
 
     Parameters:
-    - s0: np.ndarray, input speech signal (160 samples)
-    - prev_frame_resd: np.ndarray, residual signal from the previous frame (160 samples)
+    - input_speech_frame (np.ndarray): Input speech signal (160 samples).
+    - prev_residual_signal (np.ndarray): Residual signal from the previous frame (160 samples).
 
     Returns:
-    - frame_bit_stream: BitStream, 260-bit representation of the frame
-    - curr_frame_resd: np.ndarray, current frame residual signal (160 samples)
+    - frame_bitstream (str): The 260-bit binary representation of the encoded frame.
+    - current_residual_signal (np.ndarray): The residual signal for the current frame (160 samples).
     """
     num_subframes = 4
-    subframe_size = 40
+    subframe_length = 40
 
-    # Step 1: Encode using RPE_frame_slt_coder
-    LARc, Ncs, bcs, curr_frame_ex_full, curr_frame_st_resd = RPE_frame_slt_coder(
-        s0, prev_frame_resd)
+    # Step 1: Perform short-term and long-term encoding using RPE_frame_slt_coder
+    encoded_LARc, pitch_lags, gain_indices, excitation_signal, current_residual_signal = RPE_frame_slt_coder(
+        input_speech_frame, prev_residual_signal
+    )
 
-    # Step 2: Convert parameters to bitstream
-    frame_bit_stream = BitStream()
+    # Step 2: Initialize the bitstream
+    frame_bitstream = BitStream()
 
-    # Append LARc to bitstream
-    frame_bit_stream.append(f'int:{6}={LARc[0]}')
-    frame_bit_stream.append(f'int:{6}={LARc[1]}')
-    frame_bit_stream.append(f'int:{5}={LARc[2]}')
-    frame_bit_stream.append(f'int:{5}={LARc[3]}')
-    frame_bit_stream.append(f'int:{4}={LARc[4]}')
-    frame_bit_stream.append(f'int:{4}={LARc[5]}')
-    frame_bit_stream.append(f'int:{3}={LARc[6]}')
-    frame_bit_stream.append(f'int:{3}={LARc[7]}')
+    # Append LAR coefficients to the bitstream
+    frame_bitstream.append(f'int:6={encoded_LARc[0]}')
+    frame_bitstream.append(f'int:6={encoded_LARc[1]}')
+    frame_bitstream.append(f'int:5={encoded_LARc[2]}')
+    frame_bitstream.append(f'int:5={encoded_LARc[3]}')
+    frame_bitstream.append(f'int:4={encoded_LARc[4]}')
+    frame_bitstream.append(f'int:4={encoded_LARc[5]}')
+    frame_bitstream.append(f'int:3={encoded_LARc[6]}')
+    frame_bitstream.append(f'int:3={encoded_LARc[7]}')
 
-    for j in range(num_subframes):
-        # Append Nc to bitstream
-        frame_bit_stream.append(f'uint:{7}={Ncs[j]}')
+    # Step 3: Process each subframe
+    for subframe_idx in range(num_subframes):
+        # Append pitch lag (Nc) to the bitstream
+        frame_bitstream.append(f'uint:7={pitch_lags[subframe_idx]}')
 
-        # Append bc to bitstream
-        frame_bit_stream.append(f'uint:{2}={bcs[j]}')
+        # Append gain index (bc) to the bitstream
+        frame_bitstream.append(f'uint:2={gain_indices[subframe_idx]}')
 
-        # Select x_m sub-sequence and M from e
-        e = curr_frame_ex_full[(j * subframe_size)
-                                :(j * subframe_size + subframe_size)]
-        x_ms, M = xm_select(e)
+        # Extract subframe excitation signal
+        subframe_start = subframe_idx * subframe_length
+        subframe_excitation = excitation_signal[subframe_start: subframe_start + subframe_length]
 
-        # Quantize x_m and M
-        x_mcs, x_maxc = rpe_quantize(x_ms)
-        Mc = M
+        # Select x_m sub-sequence with the highest energy
+        selected_subsequence, selected_index = xm_select(subframe_excitation)
 
-        # Append Mc, x_maxc and x_mcs to bitstream
-        frame_bit_stream.append(f'uint:{2}={Mc}')
-        frame_bit_stream.append(f'uint:{6}={x_maxc}')
+        # Quantize the selected sub-sequence
+        quantized_subsequence, quantized_max_index = rpe_quantize(
+            selected_subsequence)
 
-        for x_mc in x_mcs:
-            frame_bit_stream.append(f'uint:{3}={x_mc}')
+        # Append sub-sequence selection index (Mc) and max value quantization index (x_maxc) to the bitstream
+        frame_bitstream.append(f'uint:2={selected_index}')
+        frame_bitstream.append(f'uint:6={quantized_max_index}')
 
-    return frame_bit_stream.bin, curr_frame_st_resd
+        # Append the quantized samples to the bitstream
+        for quantized_sample in quantized_subsequence:
+            frame_bitstream.append(f'uint:3={quantized_sample}')
+
+    return frame_bitstream.bin, current_residual_signal

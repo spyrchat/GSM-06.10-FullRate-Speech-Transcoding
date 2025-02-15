@@ -1,54 +1,61 @@
 import numpy as np
 
 
-def xm_select(e: np.ndarray) -> tuple[np.ndarray, int]:
+import numpy as np
+
+
+def xm_select(input_signal: np.ndarray) -> tuple[np.ndarray, int]:
     """
-    Selects the sub-sequence with the maximum energy from the input array.
-    This function processes the input array `e` using a predefined filter `H` 
+    Selects the sub-sequence with the maximum energy from the input signal.
+
+    This function processes the input signal using a predefined FIR filter `H` 
     based on ETSI GSM 06.10 and then divides the filtered signal into interleaved 
     sub-sequences. It calculates the energy of each sub-sequence and selects the one with the maximum energy.
-    Args:
-        e (np.ndarray): Input array to be processed.
+
+    Parameters:
+    - input_signal (np.ndarray): Input signal to be processed.
+
     Returns:
-        tuple: A tuple containing:
-            - np.ndarray: The selected sub-sequence with the maximum energy.
-            - int: The index of the selected sub-sequence.
+    - selected_subsequence (np.ndarray): The selected sub-sequence with the highest energy.
+    - selected_index (int): The index of the selected sub-sequence.
     """
 
-    xm_samples_length = 13
-    subframe_size = len(e)
-    H = np.array([-134, -374, 0, 2054, 5741, 8192,
-                 5741, 2054, 0, -374, -134]) / (2**13)
-    x = np.zeros(len(e))
+    num_samples = 13  # Length of each sub-sequence
+    signal_length = len(input_signal)  # Length of the input signal
 
-    for k in range(subframe_size):
-        for i in range(11):
-            index = k + 5 - i
-            if 0 <= index < subframe_size:  # This is the Boundary condition for 3.20
-                x[k] += H[i] * e[index]
+    # FIR Filter `H` for pre-processing (as per ETSI GSM 06.10)
+    fir_filter = np.array([-134, -374, 0, 2054, 5741, 8192,
+                           5741, 2054, 0, -374, -134]) / (2**13)
 
-    x_m_interleved_sequences = []
+    # Apply FIR filter to the input signal
+    filtered_signal = np.zeros(signal_length)
 
-    for m in range(4):
-        x_m = np.zeros(xm_samples_length)
-        for i in range(xm_samples_length):
-            k = m + 3 * i
-            if k < len(x):
-                x_m[i] = x[k]
-        x_m_interleved_sequences.append(x_m)
+    for k in range(signal_length):
+        for i in range(len(fir_filter)):
+            index = k + 5 - i  # Center-aligned filtering
+            if 0 <= index < signal_length:  # Boundary check
+                filtered_signal[k] += fir_filter[i] * input_signal[index]
 
-    energies = []
+    # Divide filtered signal into interleaved sub-sequences
+    interleaved_subsequences = []
 
-    for x_m in x_m_interleved_sequences:
-        energy = np.sum(x_m ** 2)
-        energies.append(energy)
-    energies = np.array(energies)
+    for sub_index in range(4):  # 4 possible sub-sequences
+        subsequence = np.zeros(num_samples)
+        for i in range(num_samples):
+            sample_index = sub_index + 3 * i  # Interleaved sampling
+            if sample_index < len(filtered_signal):
+                subsequence[i] = filtered_signal[sample_index]
+        interleaved_subsequences.append(subsequence)
 
-    # Select the x_m sub-sequence with the maximum energy
-    selected_M = np.argmax(energies)
-    selected_x_m = x_m_interleved_sequences[selected_M]
+    # Compute energy of each sub-sequence
+    subsequence_energies = np.array(
+        [np.sum(subseq ** 2) for subseq in interleaved_subsequences])
 
-    return selected_x_m, selected_M
+    # Select the sub-sequence with the maximum energy
+    selected_index = np.argmax(subsequence_energies)
+    selected_subsequence = interleaved_subsequences[selected_index]
+
+    return selected_subsequence, selected_index
 
 
 def rpe_quantize(x_ms: np.ndarray) -> tuple[np.ndarray, int]:
