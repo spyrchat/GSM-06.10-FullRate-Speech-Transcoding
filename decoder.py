@@ -3,7 +3,7 @@ import numpy as np
 from scipy.signal import lfilter
 from hw_utils import reflection_coeff_to_polynomial_coeff
 from typing import Tuple
-from encoder import quantize_LAR, decode_LAR, decode_reflection_coeffs
+from encoder import dequantize_gain_factor, quantize_LAR, decode_LAR, decode_reflection_coeffs
 
 
 def RPE_frame_st_decoder(LARc: np.ndarray, curr_frame_st_resd: np.ndarray) -> np.ndarray:
@@ -63,31 +63,12 @@ def RPE_frame_slt_decoder(
             if n - Nc[i] >= 0:
                 d_double_prime = prev_residual[n - Nc[i]]
             reconstructed_residual[start_idx +
-                                   n] = curr_subframe_ex[n] + bc[i] * d_double_prime
+                                   n] = curr_subframe_ex[n] + dequantize_gain_factor(bc[i]) * d_double_prime
 
     # Call the short-term decoder
     s0 = RPE_frame_st_decoder(LARc, reconstructed_residual)
 
     return s0, reconstructed_residual
-
-
-def RPE_frame_decoder(
-    frame_bit_stream: str,
-    prev_frame_resd: np.ndarray
-) -> Tuple[np.ndarray, np.ndarray]:
-    """
-    Decoder for a single frame of voice data.
-
-    :param frame_bit_stream: str - Encoded bitstream for the frame.
-    :param prev_frame_resd: np.ndarray - Residual signal from the previous frame.
-    :return: Tuple[np.ndarray, np.ndarray] - Reconstructed speech signal and current residual.
-    """
-    # Perform decoding steps to reconstruct the signal
-    # Placeholder: Replace with actual decoder logic
-    s0 = np.random.random(160)  # Placeholder signal reconstruction
-    curr_frame_resd = np.random.random(160)  # Placeholder residual calculation
-
-    return s0, curr_frame_resd
 
 
 def RPE_frame_decoder(frame_bit_stream: str, prev_frame_resd: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
