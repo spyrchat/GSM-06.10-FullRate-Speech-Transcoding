@@ -1,8 +1,8 @@
 import matplotlib.pyplot as plt
 from scipy.io import wavfile
 import numpy as np
-from encoder import RPE_frame_coder, RPE_frame_slt_coder
-from decoder import RPE_frame_decoder, RPE_frame_slt_decoder
+from encoder import RPE_frame_slt_coder
+from decoder import RPE_frame_slt_decoder
 
 
 def process_wav_file(input_file: str, output_file: str):
