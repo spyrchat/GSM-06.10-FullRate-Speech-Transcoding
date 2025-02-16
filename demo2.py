@@ -39,9 +39,7 @@ def process_wav_file(input_file: str, output_file: str):
             *encoded_signal[i])
 
         reconstructed_signal.append(reconstructed_frame)
-    # Convert back to int16 for WAV compatibility
-    # reconstructed_signal = np.clip(
-    #     reconstructed_signal, -32768, 32767).astype(np.int16)
+
     reconstructed_signal = np.concat(reconstructed_signal).astype(np.int16)
     print(reconstructed_signal.shape)
 
