@@ -121,7 +121,7 @@ def RPE_frame_slt_coder(
         - curr_frame_ex_full: Full prediction residual for the current frame.
         - curr_frame_st_resd: Residual after short-term analysis.
     """
-    # Step 1: Short-Term Analysis (reuse provided function)
+    # Step 1: Short-Term Analysis
     LARc, curr_frame_st_resd = RPE_frame_st_coder(s0)
 
     # Step 2: Long-Term Analysis
