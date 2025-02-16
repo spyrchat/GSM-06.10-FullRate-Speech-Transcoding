@@ -1,7 +1,150 @@
 import numpy as np
 
 
-import numpy as np
+def dequantize_gain_factor(b_c: int) -> float:
+    """
+    Dequantize the quantized gain factor (b_c) to the corresponding decoded value (b_j').
+
+    :param b_c: int - Quantized gain factor index (0, 1, 2, 3).
+    :return: float - Dequantized gain factor (b_j').
+    """
+    # Quantization levels from Table 3.3
+    QLB = [0.10, 0.35, 0.65, 1.00]  # Dequantized values
+
+    return QLB[b_c]
+
+
+def quantize_gain_factor(b: float) -> int:
+    """
+    Quantize the gain factor (b) based on defined thresholds.
+
+    :param b: float - The gain factor to quantize.
+    :return: float - The quantized gain factor.
+    """
+    # Decision thresholds and corresponding quantized levels
+    DLB = [0.2, 0.5, 0.8]  # Decision Level Boundaries
+
+    # Determine the quantized gain factor
+    if b <= DLB[0]:
+        return 0
+    elif DLB[0] < b <= DLB[1]:
+        return 1
+    elif DLB[1] < b <= DLB[2]:
+        return 2
+    elif b > DLB[2]:
+        return 3
+
+
+def decode_reflection_coeffs(LAR_decoded: np.ndarray) -> np.ndarray:
+    """
+    Decode LAR' coefficients to reflection coefficients r'(i) using GSM 06.10 (equation 3.5).
+
+    :param LAR_decoded: np.ndarray - Decoded Log-Area Ratios (LAR'(i)).
+    :return: np.ndarray - Reflection coefficients r'(i).
+    """
+    reflection_coeffs = np.zeros_like(LAR_decoded)
+
+    for i, LAR_prime in enumerate(LAR_decoded):
+        abs_LAR = abs(LAR_prime)
+        sign_LAR = np.sign(LAR_prime)  # Sign of LAR'(i)
+
+        if abs_LAR < 0.675:
+            reflection_coeffs[i] = LAR_prime  # Case 1: |LAR'(i)| < 0.675
+        elif 0.675 <= abs_LAR < 1.225:
+            reflection_coeffs[i] = sign_LAR * \
+                (0.500 * abs_LAR + 0.3375)  # Case 2
+        elif 1.225 <= abs_LAR <= 1.625:
+            reflection_coeffs[i] = sign_LAR * \
+                (0.125 * abs_LAR + 0.796875)  # Case 3
+        else:
+            raise ValueError(f"Invalid LAR'(i) value: {
+                             LAR_prime}. Expected |LAR'(i)| <= 1.625.")
+
+    return reflection_coeffs
+
+
+def decode_LAR(LARc: np.ndarray) -> np.ndarray:
+    """
+    Decode quantized Log-Area Ratios (LAR_C) to LAR'' using predefined A and B values.
+
+    :param LARc: np.ndarray - Quantized Log-Area Ratios (LAR_C).
+    :return: np.ndarray - Decoded Log-Area Ratios (LAR'').
+    """
+    # Constants from GSM 06.10
+    A = np.array([20, 20, 20, 20, 13.637, 15, 8.334, 8.824])
+    B = np.array([0, 0, -16, -16, -8, -4, -2, -1])
+
+    # Ensure LARc has the correct length
+    if len(LARc) != len(A):
+        raise ValueError(f"LARc has incorrect length: {
+                         len(LARc)}. Expected: {len(A)}")
+
+    # Decode LAR coefficients
+    LAR_decoded = (LARc - B) / A
+
+    return LAR_decoded
+
+
+def quantize_LAR(LAR: np.ndarray) -> np.ndarray:
+    """
+    Quantize the Log-Area Ratios (LAR) coefficients based on the ETSI/GSM 06.10 rules.
+
+    :param LAR: np.ndarray - Array of LAR coefficients.
+    :return: np.ndarray - Quantized LAR coefficients.
+    """
+    # Table values for A[i] and B[i] based on the standard
+    A = np.array([20, 20, 20, 20, 13.637, 15, 8.334, 8.824])
+    B = np.array([0, 0, -16, -16, -8, -4, -2, -1])
+    LAR_min = np.array([-32, -32, -16, -16, -8, -4, -2, -1])
+    LAR_max = np.array([31, 31, 15, 15, 7, 3, 1, 0])
+
+    # Ensure the input LAR has the correct length
+    if len(LAR) != len(A):
+        raise ValueError(f"LAR has incorrect length: {
+                         len(LAR)}. Expected: {len(A)}")
+
+    # Quantization rule
+    LARq = np.zeros_like(LAR, dtype=int)
+    for i in range(len(LAR)):
+        # Validate LAR[i]
+        if np.isnan(LAR[i]) or np.isinf(LAR[i]):
+            raise ValueError(f"LAR[{i}] is invalid: {LAR[i]}")
+
+        # Apply the linear transformation
+        LARq[i] = int(A[i] * LAR[i] + B[i] + 0.5)  # Round to nearest integer
+
+        # Clamp to the valid range
+        LARq[i] = max(LAR_min[i], min(LAR_max[i], LARq[i]))
+
+    return LARq
+
+
+def calculate_LAR(reflection_coeffs: np.ndarray) -> np.ndarray:
+    """
+    Calculate the Log-Area Ratios (LAR) from reflection coefficients (r(i)).
+
+    :param reflection_coeffs: np.ndarray - Reflection coefficients (r(i)).
+    :return: np.ndarray - Log-Area Ratios (LAR).
+    """
+    LAR = np.zeros_like(reflection_coeffs)
+
+    for i, r in enumerate(reflection_coeffs):
+        abs_r = abs(r)
+        sign_r = np.sign(r)  # Sign of r(i)
+
+        if abs_r < 0.675:
+            LAR[i] = r  # Case 1: |r(i)| < 0.675
+        elif 0.675 <= abs_r < 0.950:
+            # Case 2: 0.675 <= |r(i)| < 0.950
+            LAR[i] = sign_r * (2 * abs_r - 0.675)
+        elif 0.950 <= abs_r <= 1.000:
+            # Case 3: 0.950 <= |r(i)| <= 1.000
+            LAR[i] = sign_r * (8 * abs_r - 6.375)
+        else:
+            raise ValueError(f"Invalid reflection coefficient r(i) = {
+                             r}. Expected |r(i)| <= 1.")
+
+    return LAR
 
 
 def xm_select(input_signal: np.ndarray) -> tuple[np.ndarray, int]:
