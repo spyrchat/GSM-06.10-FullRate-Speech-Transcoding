@@ -1,9 +1,9 @@
 from bitstring import BitStream
 import numpy as np
 from scipy.signal import lfilter
-from hw_utils import reflection_coeff_to_polynomial_coeff, polynomial_coeff_to_reflection_coeff
+from hw_utils import reflection_coeff_to_polynomial_coeff
 from typing import Tuple
-from encoder import dequantize_gain_factor, quantize_LAR, decode_LAR, decode_reflection_coeffs
+from encoder import dequantize_gain_factor, decode_LAR, decode_reflection_coeffs
 from utils import rpe_dequantize, reconstruct_excitation
 
 
@@ -112,7 +112,7 @@ def RPE_frame_decoder(frame_bit_stream: str, prev_frame_resd: np.ndarray) -> Tup
     # Step 2: Construct the excitation signal
     excitation_signal = np.zeros(160)
 
-    for j in range(num_subframes):
+    for j in range(num_subframes): 
         subframe_start = j * subframe_length
 
         # Dequantize RPE samples
