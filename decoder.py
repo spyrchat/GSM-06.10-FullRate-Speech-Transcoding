@@ -4,29 +4,48 @@ from scipy.signal import lfilter
 from hw_utils import reflection_coeff_to_polynomial_coeff, polynomial_coeff_to_reflection_coeff
 from typing import Tuple
 from encoder import dequantize_gain_factor, decode_LAR, decode_reflection_coeffs
-from utils import rpe_dequantize, reconstruct_excitation, short_term_synthesis_filter, apply_deemphasis_filter
+from utils import rpe_dequantize, reconstruct_excitation
 
 
 def RPE_frame_st_decoder(LARc: np.ndarray, curr_frame_st_resd: np.ndarray) -> np.ndarray:
     """
-    Short-term decoder for a single frame of voice data.
+    Implements Short-Term Synthesis Filtering H_s(z) as per GSM 06.10 (3.2.3),
+    using a lattice filter structure.
 
-    :param LARc: np.ndarray - Quantized LAR coefficients.
-    :param curr_frame_st_resd: np.ndarray - Prediction residual (d'(n)).
-    :return: np.ndarray - Reconstructed voice signal (s0).
+    :param LARc: np.ndarray - Quantized LAR coefficients (8 values).
+    :param curr_frame_st_resd: np.ndarray - Prediction residual signal d'(n).
+    :return: np.ndarray - Reconstructed speech signal s_r'(k).
     """
-    LAR_new = decode_LAR(LARc)
-    r_new = decode_reflection_coeffs(LAR_new)
-    w_new = reflection_coeff_to_polynomial_coeff(r_new)[0]
+    # Step 1: Convert LARc to reflection coefficients
+    decoded_LAR = decode_LAR(LARc)  # Decode LAR to real values
+    reflection_coeffs = decode_reflection_coeffs(decoded_LAR)  # Convert to reflection coefficients
 
-    s = lfilter([1], w_new, curr_frame_st_resd)
+    frame_length = len(curr_frame_st_resd)
+    order = len(reflection_coeffs)  # Order = 8 for GSM
 
+    # Step 2: Initialize output buffers
+    s_r = np.zeros((order + 1, frame_length))
+    s_r[0] = curr_frame_st_resd  # First stage is the input residual d'(n)
+
+    # Step 3: Apply recursive lattice filtering
+    for i in range(1, order + 1):  # i = 1 to 8 (GSM standard)
+        for k in range(frame_length):
+            s_r[i, k] = s_r[i - 1, k]  # Copy previous stage output
+            if k > 0:
+                s_r[i, k] -= reflection_coeffs[order - i] * s_r[i - 1, k - 1]  # Apply reflection coefficient
+
+    # Step 4: Extract final synthesized speech signal s_r'(k)
+    s_r_prime = s_r[order]
+
+    # Step 5: Apply Post-Processing (De-emphasis Filtering)
     beta = 28180 * (2 ** -15)
-    sro = np.zeros(s.shape)
-    for k in range(len(s)):
-        sro[k] = s[k] + beta * (sro[k - 1] if k > 0 else 0)
-    sro = sro.astype(np.int16)
-    return sro
+    s_ro = np.zeros(frame_length)
+    for k in range(frame_length):
+        s_ro[k] = s_r_prime[k] + beta * (s_ro[k - 1] if k > 0 else 0)
+
+    # Step 6: Normalize & Cast to int16 to Prevent Overflow
+    s_ro = np.clip(s_ro, -32768, 32767)  # Prevent overflow
+    return s_ro.astype(np.int16)  # Cast to int16
 
 
 def RPE_frame_slt_decoder(
@@ -68,7 +87,6 @@ def RPE_frame_slt_decoder(
 
     # Call the short-term decoder
     s0 = RPE_frame_st_decoder(LARc, reconstructed_residual)
-
     return s0, reconstructed_residual
 
 
@@ -88,19 +106,12 @@ def RPE_frame_decoder(frame_bit_stream: str, prev_frame_resd: np.ndarray) -> tup
     bitstream = BitStream(bin=frame_bit_stream) if isinstance(frame_bit_stream, str) else frame_bit_stream
 
     # Extract LPC coefficients (LARc)
-    LARc = [
+    LARc = np.array([
         bitstream.read('int:6'), bitstream.read('int:6'),
         bitstream.read('int:5'), bitstream.read('int:5'),
         bitstream.read('int:4'), bitstream.read('int:4'),
         bitstream.read('int:3'), bitstream.read('int:3')
-    ]
-
-    # ** FIX: Decode LAR coefficients and ensure proper transformation **
-    LARc = np.array(LARc)
-    decoded_LAR = decode_LAR(LARc)  # Convert from quantized to real LAR values
-
-    # ** FIX: Convert LAR to reflection coefficients correctly **
-    reflection_coeffs = decode_reflection_coeffs(decoded_LAR)  # Use the correct function
+    ])
 
     # Extract subframe parameters
     Nc, bc, Mc, x_maxc, x_mcs = [], [], [], [], []
@@ -129,10 +140,9 @@ def RPE_frame_decoder(frame_bit_stream: str, prev_frame_resd: np.ndarray) -> tup
         # Insert excitation into the full signal
         excitation_signal[subframe_start:subframe_start + subframe_length] += excitation
 
-    # Step 3: Apply Short-Term Synthesis Filtering
-    s_r_prime = short_term_synthesis_filter(excitation_signal, reflection_coeffs)
+    # Step 3: Apply Long-Term Synthesis Filtering & Short-Term Synthesis Filtering
+    s_ro, reconstructed_residual = RPE_frame_slt_decoder(
+        LARc, Nc, bc, excitation_signal, prev_frame_resd
+    )
 
-    # Step 4: Apply Post-Processing (De-Emphasis Filter)
-    final_output = apply_deemphasis_filter(s_r_prime)
-
-    return final_output, excitation_signal
+    return s_ro, reconstructed_residual
