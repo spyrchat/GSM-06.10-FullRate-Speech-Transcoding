@@ -16,23 +16,25 @@ def dequantize_gain_factor(b_c: int) -> float:
 
 def quantize_gain_factor(b: float) -> int:
     """
-    Quantize the gain factor (b) based on defined thresholds.
+    Implements quantization of b gain.
 
-    :param b: float - The gain factor to quantize.
-    :return: float - The quantized gain factor.
+    Parameters:
+    - b: float, gain
+
+    Returns:
+    - bc: int, quantized gain
     """
-    # Decision thresholds and corresponding quantized levels
-    DLB = [0.2, 0.5, 0.8]  # Decision Level Boundaries
-
-    # Determine the quantized gain factor
+    DLB = [0.2, 0.5, 0.8]
+    
     if b <= DLB[0]:
         return 0
     elif DLB[0] < b <= DLB[1]:
         return 1
     elif DLB[1] < b <= DLB[2]:
         return 2
-    elif b > DLB[2]:
+    elif DLB[2] < b:
         return 3
+
 
 
 def decode_reflection_coeffs(LAR_decoded: np.ndarray) -> np.ndarray:
@@ -71,8 +73,8 @@ def decode_LAR(LARc: np.ndarray) -> np.ndarray:
     :return: np.ndarray - Decoded Log-Area Ratios (LAR'').
     """
     # Constants from GSM 06.10
-    A = np.array([20, 20, 20, 20, 13.637, 15, 8.334, 8.824])
-    B = np.array([0, 0, -16, -16, -8, -4, -2, -1])
+    A = [20.0, 20.0, 20.0, 20.0, 13.637, 15.0, 8.334, 8.824]
+    B = [0.0, 0.0, 4.0, -5.0, 0.184, -3.5, -0.666, -2.235]
 
     # Ensure LARc has the correct length
     if len(LARc) != len(A):
@@ -87,62 +89,53 @@ def decode_LAR(LARc: np.ndarray) -> np.ndarray:
 
 def quantize_LAR(LAR: np.ndarray) -> np.ndarray:
     """
-    Quantize the Log-Area Ratios (LAR) coefficients based on the ETSI/GSM 06.10 rules.
+    Implements quantization of LAR coefficients to LARc.
 
-    :param LAR: np.ndarray - Array of LAR coefficients.
-    :return: np.ndarray - Quantized LAR coefficients.
+    Parameters:
+    - LAR: np.ndarray, Log-Area Ratios (LAR)
+
+    Returns:
+    - LARc: np.ndarray, quantized LAR coefficients
     """
-    # Table values for A[i] and B[i] based on the standard
     A = np.array([20, 20, 20, 20, 13.637, 15, 8.334, 8.824])
-    B = np.array([0, 0, -16, -16, -8, -4, -2, -1])
-    LAR_min = np.array([-32, -32, -16, -16, -8, -4, -2, -1])
-    LAR_max = np.array([31, 31, 15, 15, 7, 3, 1, 0])
-
-    # Ensure the input LAR has the correct length
-    if len(LAR) != len(A):
-        raise ValueError(f"LAR has incorrect length: {
-                         len(LAR)}. Expected: {len(A)}")
-
-    # Quantization rule
-    LARq = np.zeros_like(LAR, dtype=int)
+    B = [0.0, 0.0, 4.0, -5.0, 0.184, -3.5, -0.666, -2.235]
+    LARc = np.zeros_like(LAR, dtype=int)
     for i in range(len(LAR)):
-        # Validate LAR[i]
-        if np.isnan(LAR[i]) or np.isinf(LAR[i]):
-            raise ValueError(f"LAR[{i}] is invalid: {LAR[i]}")
+        quantized = A[i] * LAR[i] + B[i]
+        LARc[i] = int(quantized + np.sign(quantized) * 0.5)  # Round to nearest integer
 
-        # Apply the linear transformation
-        LARq[i] = int(A[i] * LAR[i] + B[i] + 0.5)  # Round to nearest integer
+        # Clamp to specified range
+        if i < 2:
+            LARc[i] = max(-32, min(31, LARc[i]))
+        elif i < 4:
+            LARc[i] = max(-16, min(15, LARc[i]))
+        elif i < 6:
+            LARc[i] = max(-8, min(7, LARc[i]))
+        else:
+            LARc[i] = max(-4, min(3, LARc[i]))
+    return LARc
 
-        # Clamp to the valid range
-        LARq[i] = max(LAR_min[i], min(LAR_max[i], LARq[i]))
-
-    return LARq
 
 
 def calculate_LAR(reflection_coeffs: np.ndarray) -> np.ndarray:
     """
-    Calculate the Log-Area Ratios (LAR) from reflection coefficients (r(i)).
+    Implements the transformation to convert reflection coefficients r to LAR.
 
-    :param reflection_coeffs: np.ndarray - Reflection coefficients (r(i)).
-    :return: np.ndarray - Log-Area Ratios (LAR).
+    Parameters:
+    - ra: np.ndarray, reflection coefficients r
+
+    Returns:
+    - LAR: np.ndarray, Log-Area Ratios (LAR)
     """
-    LAR = np.zeros_like(reflection_coeffs)
-
-    for i, r in enumerate(reflection_coeffs):
-        abs_r = abs(r)
-        sign_r = np.sign(r)  # Sign of r(i)
-
+    LAR = np.zeros_like(reflection_coeffs, dtype=float)
+    for i in range(len(LAR)):
+        abs_r = abs(reflection_coeffs[i])
         if abs_r < 0.675:
-            LAR[i] = r  # Case 1: |r(i)| < 0.675
+            LAR[i] = reflection_coeffs[i]
         elif 0.675 <= abs_r < 0.950:
-            # Case 2: 0.675 <= |r(i)| < 0.950
-            LAR[i] = sign_r * (2 * abs_r - 0.675)
+            LAR[i] = np.sign(reflection_coeffs[i]) * (2 * abs_r - 0.675)
         elif 0.950 <= abs_r <= 1.000:
-            # Case 3: 0.950 <= |r(i)| <= 1.000
-            LAR[i] = sign_r * (8 * abs_r - 6.375)
-        else:
-            raise ValueError(f"Invalid reflection coefficient r(i) = {
-                             r}. Expected |r(i)| <= 1.")
+            LAR[i] = np.sign(reflection_coeffs[i]) * (8 * abs_r - 6.375)
 
     return LAR
 
