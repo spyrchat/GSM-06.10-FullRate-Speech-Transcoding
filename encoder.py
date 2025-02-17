@@ -104,6 +104,7 @@ def RPE_subframe_slt_lte(
     return N_opt, b_opt
 
 
+
 def RPE_frame_slt_coder(s0: np.ndarray, prev_frame_st_resd: np.ndarray) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Implements long-term analysis and prediction based on ETSI GSM 06.10.
@@ -116,15 +117,15 @@ def RPE_frame_slt_coder(s0: np.ndarray, prev_frame_st_resd: np.ndarray) -> tuple
     - LARc: np.ndarray, 8 quantized LAR coefficients.
     - Nc: np.ndarray, quantized long-term prediction lags.
     - bc: np.ndarray, quantized long-term prediction gains.
-    - curr_frame_ex_full: np.ndarray, full prediction error.
+    - curr_frame_ex_full: np.ndarray, full prediction error (without explicit excitation computation).
     - curr_frame_st_resd: np.ndarray, (reconstructed) short-term residual for the current frame.
     """
 
-    # Step 1: Short-Term Analysis
+    # Step 1: Short-Term Analysis (Extract LAR coefficients and compute short-term residual)
     LARc, curr_frame_st_resd = RPE_frame_st_coder(s0)
 
-    # Step 2: Long-Term Analysis
-    subframe_size = 40
+    # Step 2: Long-Term Analysis (LTP)
+    subframe_length = 40
     num_subframes = 4
 
     Nc = np.zeros(num_subframes, dtype=int)
@@ -132,45 +133,31 @@ def RPE_frame_slt_coder(s0: np.ndarray, prev_frame_st_resd: np.ndarray) -> tuple
     curr_frame_ex_full = np.zeros(160, dtype=float)
 
     # Extend the residual buffer to reference previous frames
-    two_frames_resd = np.concatenate((prev_frame_st_resd, curr_frame_st_resd), dtype=float)
+    extended_residual = np.concatenate((prev_frame_st_resd, curr_frame_st_resd), dtype=float)
 
-    # Process each subframe
-    for j in range(num_subframes):
-        kj = 160 + j * subframe_size
-        d = two_frames_resd[kj: kj + subframe_size]
-        prev_d = two_frames_resd[(kj - 120):kj]
+    for subframe_idx in range(num_subframes):
+        subframe_start = 160 + subframe_idx * subframe_length
+        curr_subframe = extended_residual[subframe_start: subframe_start + subframe_length]
+        prev_subframe = extended_residual[(subframe_start - 120):subframe_start]
 
-        # Estimate pitch lag (N) and gain factor (b)
-        N, b = RPE_subframe_slt_lte(d, prev_d)
+        # Estimate pitch lag (Nc) and gain factor (bc)
+        pitch_lag, gain_factor = RPE_subframe_slt_lte(curr_subframe, prev_subframe)
 
-        # Quantize N and b
-        Nc[j] = N
-        bc[j] = quantize_gain_factor(b)
+        # Quantize pitch lag and gain factor
+        Nc[subframe_idx] = pitch_lag
+        bc[subframe_idx] = quantize_gain_factor(gain_factor)
 
-        # Dequantize N and b
-        N_ = Nc[j]
-        b_ = dequantize_gain_factor(bc[j])
+        # Dequantize pitch lag and gain factor
+        pitch_lag_decoded = Nc[subframe_idx]
+        gain_factor_decoded = dequantize_gain_factor(bc[subframe_idx])
 
-        # Compute prediction error (analysis step)
-        e = d - b_ * two_frames_resd[(kj - N_):(kj + subframe_size - N_)]
-        curr_frame_ex_full[j * subframe_size: (j + 1) * subframe_size] = e
+        # Compute prediction error 
+        excitation_error = curr_subframe - gain_factor_decoded * extended_residual[(subframe_start - pitch_lag_decoded):(subframe_start + subframe_length - pitch_lag_decoded)]
+        curr_frame_ex_full[subframe_idx * subframe_length: (subframe_idx + 1) * subframe_length] = excitation_error
 
-        # Excitation undersampling and reconstruction
-        x_m, M = xm_select(e)
-        x_mc, x_maxc = rpe_quantize(x_m)
-
-        x_m_ = rpe_dequantize(x_mc, x_maxc)
-        M_ = M
-
-        e_ = reconstruct_excitation(x_m_, M_)
-
-        # Synthesis step
-        two_frames_resd[kj: kj + subframe_size] = e_ + b_ * two_frames_resd[(kj - N_):(kj + subframe_size - N_)]
-
-    # Extract the reconstructed short-term residual
-    curr_frame_st_resd = two_frames_resd[160:]
-
+    # Return results (excitation computation will be handled later)
     return LARc, Nc, bc, curr_frame_ex_full, curr_frame_st_resd
+
 
 
 def RPE_frame_coder(input_speech_frame: np.ndarray, prev_residual_signal: np.ndarray) -> Tuple[str, np.ndarray]:
@@ -189,11 +176,22 @@ def RPE_frame_coder(input_speech_frame: np.ndarray, prev_residual_signal: np.nda
     subframe_length = 40
 
     # Step 1: Perform short-term and long-term encoding using RPE_frame_slt_coder
-    encoded_LARc, pitch_lags, gain_indices, excitation_signal, current_residual_signal = RPE_frame_slt_coder(
+    encoded_LARc, pitch_lags, gain_indices, prediction_error, current_residual_signal = RPE_frame_slt_coder(
         input_speech_frame, prev_residual_signal
     )
 
-    # Step 2: Initialize the bitstream
+    # Step 2: Compute the Excitation Signal
+    excitation_signal = np.zeros(160, dtype=float)
+    for subframe_idx in range(num_subframes):
+        subframe_start = subframe_idx * subframe_length
+        pitch_lag_decoded = pitch_lags[subframe_idx]
+        gain_factor_decoded = dequantize_gain_factor(gain_indices[subframe_idx])
+
+        for i in range(subframe_length):
+            excitation_signal[subframe_start + i] = prediction_error[subframe_start + i] + \
+                gain_factor_decoded * prev_residual_signal[subframe_start + i - pitch_lag_decoded]
+
+    # Step 3: Initialize the bitstream
     frame_bitstream = BitStream()
 
     # Append LAR coefficients to the bitstream
@@ -206,7 +204,7 @@ def RPE_frame_coder(input_speech_frame: np.ndarray, prev_residual_signal: np.nda
     frame_bitstream.append(f'int:3={encoded_LARc[6]}')
     frame_bitstream.append(f'int:3={encoded_LARc[7]}')
 
-    # Step 3: Process each subframe
+    # Step 4: Process each subframe
     for subframe_idx in range(num_subframes):
         # Append pitch lag (Nc) to the bitstream
         frame_bitstream.append(f'uint:7={pitch_lags[subframe_idx]}')
@@ -222,8 +220,7 @@ def RPE_frame_coder(input_speech_frame: np.ndarray, prev_residual_signal: np.nda
         selected_subsequence, selected_index = xm_select(subframe_excitation)
 
         # Quantize the selected sub-sequence
-        quantized_subsequence, quantized_max_index = rpe_quantize(
-            selected_subsequence)
+        quantized_subsequence, quantized_max_index = rpe_quantize(selected_subsequence)
 
         # Append sub-sequence selection index (Mc) and max value quantization index (x_maxc) to the bitstream
         frame_bitstream.append(f'uint:2={selected_index}')
