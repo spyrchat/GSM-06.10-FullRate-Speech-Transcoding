@@ -1,10 +1,10 @@
 from bitstring import BitStream
 import numpy as np
 from scipy.signal import lfilter
-from hw_utils import reflection_coeff_to_polynomial_coeff
+from hw_utils import reflection_coeff_to_polynomial_coeff, polynomial_coeff_to_reflection_coeff
 from typing import Tuple
 from encoder import dequantize_gain_factor, decode_LAR, decode_reflection_coeffs
-from utils import rpe_dequantize, reconstruct_excitation
+from utils import rpe_dequantize, reconstruct_excitation, short_term_synthesis_filter, apply_deemphasis_filter
 
 
 def RPE_frame_st_decoder(LARc: np.ndarray, curr_frame_st_resd: np.ndarray) -> np.ndarray:
@@ -72,30 +72,37 @@ def RPE_frame_slt_decoder(
     return s0, reconstructed_residual
 
 
-def RPE_frame_decoder(frame_bit_stream: str, prev_frame_resd: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+def RPE_frame_decoder(frame_bit_stream: str, prev_frame_resd: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
     """
-    Decodes a GSM 06.10 RPE-LTP encoded frame from a bitstream and applies post-processing.
+    Decodes a GSM 06.10 RPE-LTP encoded frame from a bitstream.
 
     Parameters:
     - frame_bit_stream (str): The binary bitstream representing the encoded frame.
     - prev_frame_resd (np.ndarray): The residual signal from the previous frame (160 samples).
 
     Returns:
-    - Tuple[np.ndarray, np.ndarray]: The reconstructed speech signal (s'(n)) and residual signal.
+    - Tuple[np.ndarray, np.ndarray]: The reconstructed speech signal and residual signal.
     """
 
     # Step 1: Parse the bitstream
     bitstream = BitStream(bin=frame_bit_stream) if isinstance(frame_bit_stream, str) else frame_bit_stream
 
-    # 1a. Extract LPC coefficients (LARc) - used once per frame
-    LARc = np.array([
+    # Extract LPC coefficients (LARc)
+    LARc = [
         bitstream.read('int:6'), bitstream.read('int:6'),
         bitstream.read('int:5'), bitstream.read('int:5'),
         bitstream.read('int:4'), bitstream.read('int:4'),
         bitstream.read('int:3'), bitstream.read('int:3')
-    ])
+    ]
 
-    # 1b. Extract subframe parameters
+    # ** FIX: Decode LAR coefficients and ensure proper transformation **
+    LARc = np.array(LARc)
+    decoded_LAR = decode_LAR(LARc)  # Convert from quantized to real LAR values
+
+    # ** FIX: Convert LAR to reflection coefficients correctly **
+    reflection_coeffs = decode_reflection_coeffs(decoded_LAR)  # Use the correct function
+
+    # Extract subframe parameters
     Nc, bc, Mc, x_maxc, x_mcs = [], [], [], [], []
     num_subframes = 4
     subframe_length = 40
@@ -122,19 +129,10 @@ def RPE_frame_decoder(frame_bit_stream: str, prev_frame_resd: np.ndarray) -> Tup
         # Insert excitation into the full signal
         excitation_signal[subframe_start:subframe_start + subframe_length] += excitation
 
-    # Step 3: Perform Long-Term Prediction and Synthesis
-    s0, reconstructed_residual = RPE_frame_slt_decoder(
-        LARc, Nc, bc, excitation_signal, prev_frame_resd
-    )
+    # Step 3: Apply Short-Term Synthesis Filtering
+    s_r_prime = short_term_synthesis_filter(excitation_signal, reflection_coeffs)
 
-    # Step 4: Post-Processing (IIR De-Emphasis Filter)
-    beta = 28180 * (2 ** -15)  # Standard de-emphasis filter coefficient
-    s_ro = np.zeros_like(s0, dtype=np.float64)
+    # Step 4: Apply Post-Processing (De-Emphasis Filter)
+    final_output = apply_deemphasis_filter(s_r_prime)
 
-    for k in range(len(s0)):
-        s_ro[k] = s0[k] + beta * (s_ro[k - 1] if k > 0 else 0)
-
-    # **Prevent Overflow** by clipping before conversion
-    s_ro = np.clip(s_ro, -32768, 32767).astype(np.int16)
-
-    return s_ro, reconstructed_residual
+    return final_output, excitation_signal

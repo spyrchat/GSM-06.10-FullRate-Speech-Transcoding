@@ -338,3 +338,46 @@ def reconstruct_excitation(dequantized_rpe_seq: np.ndarray, grid_position: int) 
         excitation_signal[index] = sample
 
     return excitation_signal
+
+def short_term_synthesis_filter(d_r_prime, reflection_coeffs):
+    """
+    Implements the lattice filter for short-term synthesis as per GSM 06.10.
+    
+    :param d_r_prime: np.ndarray - The short-term residual signal.
+    :param reflection_coeffs: np.ndarray - The decoded reflection coefficients.
+    :return: np.ndarray - The reconstructed speech signal.
+    """
+    frame_length = len(d_r_prime)
+    order = len(reflection_coeffs)  # Order = 8 for GSM
+
+    # Initialize output and intermediate buffers
+    s_r = np.zeros((order + 1, frame_length))
+
+    # Step 1: First stage (direct assignment)
+    s_r[0] = d_r_prime
+
+    # Step 2: Apply recursive filtering
+    for i in range(1, order + 1):
+        for k in range(frame_length):
+            s_r[i, k] = s_r[i - 1, k]
+            if k > 0:
+                s_r[i, k] -= reflection_coeffs[order - i] * s_r[i - 1, k - 1]
+
+    # The final output is the last row of s_r
+    return s_r[-1]
+
+
+def apply_deemphasis_filter(s_r_prime):
+    """
+    Applies the post-processing de-emphasis filter to the reconstructed signal.
+    
+    :param s_r_prime: np.ndarray - The short-term synthesized speech signal.
+    :return: np.ndarray - The final processed speech signal.
+    """
+    beta = 28180 * (2 ** -15)
+    s_ro = np.zeros_like(s_r_prime)
+
+    for k in range(len(s_r_prime)):
+        s_ro[k] = s_r_prime[k] + beta * (s_ro[k - 1] if k > 0 else 0)
+
+    return s_ro.astype(np.int16)
