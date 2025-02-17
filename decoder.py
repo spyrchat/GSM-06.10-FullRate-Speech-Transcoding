@@ -64,8 +64,7 @@ def RPE_frame_slt_decoder(
             d_double_prime = 0
             if n - Nc[i] >= 0:
                 d_double_prime = prev_residual[n - Nc[i]]
-            reconstructed_residual[start_idx +
-                                   n] = curr_subframe_ex[n] + dequantize_gain_factor(bc[i]) * d_double_prime
+            reconstructed_residual[start_idx + n] = curr_subframe_ex[n] + dequantize_gain_factor(bc[i]) * d_double_prime
 
     # Call the short-term decoder
     s0 = RPE_frame_st_decoder(LARc, reconstructed_residual)
@@ -88,52 +87,50 @@ def RPE_frame_decoder(frame_bitstream: str, prev_residual: np.ndarray) -> Tuple[
     num_subframes = 4
     subframe_size = 40
 
-    try:
-        # Ensure frame_bitstream is a BitStream object
-        if isinstance(frame_bitstream, str):
-            frame_bitstream = BitStream(bin=frame_bitstream)
+    # Ensure frame_bitstream is a BitStream object
+    if isinstance(frame_bitstream, str):
+        frame_bitstream = BitStream(bin=frame_bitstream)
 
-        # Step 1: Parse bitstream to extract parameters
-        quantized_lar = np.zeros(8, dtype=int)
-        pitch_lags = np.zeros(num_subframes, dtype=int)
-        gain_indices = np.zeros(num_subframes, dtype=int)
-        excitation_signal = np.zeros(160, dtype=float)
+    # Step 1: Parse bitstream to extract parameters
+    quantized_lar = np.zeros(8, dtype=int)
+    pitch_lags = np.zeros(num_subframes, dtype=int)
+    gain_indices = np.zeros(num_subframes, dtype=int)
+    excitation_signal = np.zeros(160, dtype=float)
 
-        # Extract quantized LAR coefficients from bitstream
-        quantized_lar[0] = frame_bitstream.read('int:6')
-        quantized_lar[1] = frame_bitstream.read('int:6')
-        quantized_lar[2] = frame_bitstream.read('int:5')
-        quantized_lar[3] = frame_bitstream.read('int:5')
-        quantized_lar[4] = frame_bitstream.read('int:4')
-        quantized_lar[5] = frame_bitstream.read('int:4')
-        quantized_lar[6] = frame_bitstream.read('int:3')
-        quantized_lar[7] = frame_bitstream.read('int:3')
+    # Extract quantized LAR coefficients from bitstream
+    quantized_lar[0] = frame_bitstream.read('int:6')
+    quantized_lar[1] = frame_bitstream.read('int:6')
+    quantized_lar[2] = frame_bitstream.read('int:5')
+    quantized_lar[3] = frame_bitstream.read('int:5')
+    quantized_lar[4] = frame_bitstream.read('int:4')
+    quantized_lar[5] = frame_bitstream.read('int:4')
+    quantized_lar[6] = frame_bitstream.read('int:3')
+    quantized_lar[7] = frame_bitstream.read('int:3')
 
-        for subframe_idx in range(num_subframes):
-            # Extract pitch lag (Nc) and gain index (bc) from bitstream
-            pitch_lags[subframe_idx] = frame_bitstream.read('uint:7')
-            gain_indices[subframe_idx] = frame_bitstream.read('uint:2')
+    for subframe_idx in range(num_subframes):
+        # Extract pitch lag (Nc) and gain index (bc) from bitstream
+        pitch_lags[subframe_idx] = frame_bitstream.read('uint:7')
+        gain_indices[subframe_idx] = frame_bitstream.read('uint:2')
 
-            # Extract Mc, x_maxc, and x_mcs
-            selected_index = frame_bitstream.read('uint:2')
-            quantized_max_index = frame_bitstream.read('uint:6')
-            quantized_subseq = np.array(
-                [frame_bitstream.read('uint:3') for _ in range(13)], dtype=int
-            )
-
-            # Dequantize x_mcs and Mc
-            dequantized_subseq = rpe_dequantize(quantized_subseq, quantized_max_index)
-
-            # Reconstruct excitation signal
-            excitation = reconstruct_excitation(dequantized_subseq, selected_index)
-            excitation_signal[(subframe_idx * subframe_size):((subframe_idx + 1) * subframe_size)] = excitation
-
-        # Step 2: Decode using RPE_frame_slt_decoder
-        reconstructed_signal, curr_residual = RPE_frame_slt_decoder(
-            quantized_lar, pitch_lags, gain_indices, excitation_signal, prev_residual
+        # Extract Mc, x_maxc, and x_mcs
+        selected_index = frame_bitstream.read('uint:2')
+        quantized_max_index = frame_bitstream.read('uint:6')
+        quantized_subseq = np.array(
+            [frame_bitstream.read('uint:3') for _ in range(13)], dtype=int
         )
 
-        return reconstructed_signal, curr_residual
+        # Dequantize x_mcs and Mc
+        dequantized_subseq = rpe_dequantize(quantized_subseq, quantized_max_index)
 
-    except ReadError:
-        raise ValueError("Error reading the bitstream. Ensure the bitstream is properly formatted.")
+        # Reconstruct excitation signal
+        excitation = reconstruct_excitation(dequantized_subseq, selected_index)
+        excitation_signal[(subframe_idx * subframe_size):((subframe_idx + 1) * subframe_size)] = excitation
+
+    # Step 2: Decode using RPE_frame_slt_decoder
+    reconstructed_signal, curr_residual = RPE_frame_slt_decoder(
+        quantized_lar, pitch_lags, gain_indices, excitation_signal, prev_residual
+    )
+
+    return reconstructed_signal, curr_residual
+
+

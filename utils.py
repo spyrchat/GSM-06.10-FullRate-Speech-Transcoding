@@ -103,8 +103,6 @@ def quantize_LAR(LAR: np.ndarray) -> np.ndarray:
     for i in range(len(LAR)):
         quantized = A[i] * LAR[i] + B[i]
         LARc[i] = int(quantized + np.sign(quantized) * 0.5)  # Round to nearest integer
-
-        # Clamp to specified range
         if i < 2:
             LARc[i] = max(-32, min(31, LARc[i]))
         elif i < 4:
