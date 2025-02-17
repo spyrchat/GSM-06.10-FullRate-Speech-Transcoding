@@ -22,10 +22,10 @@ GSM 06.10 is a **speech compression standard** used in digital cellular systems.
 ├── 📜 decoder.py       # Decoding process (inverse LPC, excitation reconstruction)
 ├── 📜 utils.py         # Helper functions for signal processing
 ├── 📜 hw_utils.py      # Utility functions for coefficient transformations
-├── 📜 demo1.py        # Basic encoding/decoding demonstration
-├── 📜 demo2.py        # Extended demonstration with enhanced features
-├── 📜 demo3.py        # Full feature demonstration and performance evaluation
-└── 🎵 ena_dio_tria.wav       # Example input audio file
+├── 📜 demo1.py         # Basic encoding/decoding demonstration
+├── 📜 demo2.py         # Extended demonstration with enhanced features
+├── 📜 demo3.py         # Full feature demonstration and performance evaluation
+└── 🎵 ena_dio_tria.wav # Example input audio file
 ```
 
 ## 🛠 Installation & Setup
