@@ -1,7 +1,5 @@
 # 📢 GSM 06.10 Full-Rate Speech Codec
 
-![GSM Logo](https://upload.wikimedia.org/wikipedia/commons/thumb/4/4d/GSM_logo.svg/320px-GSM_logo.svg.png)
-
 ## 🔥 Overview
 This project implements a **GSM 06.10 Full-Rate Speech Codec** based on the **Regular Pulse Excitation (RPE-LTP)** algorithm. The codec is capable of **encoding** and **decoding** speech audio, transforming it into a compressed bitstream and reconstructing it back to speech.
 
