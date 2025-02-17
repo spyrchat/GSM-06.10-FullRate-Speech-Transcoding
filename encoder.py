@@ -106,65 +106,81 @@ def RPE_subframe_slt_lte(
 
 
 def RPE_frame_slt_coder(
-    s0: np.ndarray,
-    prev_frame_st_resd: np.ndarray
+    input_speech_frame: np.ndarray,
+    prev_short_term_residual: np.ndarray
 ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
     """
     Short-term and long-term coder for a single frame of voice data with quantized LTP gain.
 
-    :param s0: np.ndarray - 160 samples of the input voice signal.
-    :param prev_frame_st_resd: np.ndarray - Residual from the previous frame (160 samples).
-    :return: Tuple containing:
-        - LARc: Quantized LAR coefficients.
-        - Nc: Estimated pitch periods for all subframes.
-        - bc: Quantized gain factors for all subframes.
-        - curr_frame_ex_full: Full prediction residual for the current frame.
-        - curr_frame_st_resd: Residual after short-term analysis.
-    """
-    # Step 1: Short-Term Analysis
-    LARc, curr_frame_st_resd = RPE_frame_st_coder(s0)
+    Parameters:
+    - input_speech_frame (np.ndarray): 160 samples of the input speech signal.
+    - prev_short_term_residual (np.ndarray): Residual from the previous frame (160 samples).
 
-    # Step 2: Long-Term Analysis
+    Returns:
+    - LARc (np.ndarray): Quantized LAR coefficients.
+    - pitch_lags (np.ndarray): Estimated pitch periods for all subframes.
+    - gain_factors (np.ndarray): Quantized gain factors for all subframes.
+    - prediction_residual (np.ndarray): Long-term prediction residual for the current frame.
+    - synthesized_short_term_residual (np.ndarray): Residual after short-term synthesis.
+    """
+
     frame_length = 160
     subframe_length = 40
-    Nc_values_opt = []
-    bc_values_opt = []
-    curr_frame_ex_full = np.zeros(frame_length)
+
+    # Step 1: Short-Term Analysis
+    LARc, curr_frame_st_resd = RPE_frame_st_coder(input_speech_frame)
+
+    # Step 2: Perform Short-Term Synthesis
+    # This reconstructs `curr_frame_st_resd'` (synthesized short-term residual) before Long-Term Analysis
+    decoded_LAR = decode_LAR(LARc)
+    reflection_coeffs = decode_reflection_coeffs(decoded_LAR)
+    predictor_coeffs = reflection_coeff_to_polynomial_coeff(reflection_coeffs)[0]
+    
+    synthesized_short_term_residual = np.zeros(frame_length)
+    for i in range(len(curr_frame_st_resd)):
+        synthesized_short_term_residual[i] = curr_frame_st_resd[i]
+        for k in range(1, len(predictor_coeffs)):
+            if i - k >= 0:
+                synthesized_short_term_residual[i] -= predictor_coeffs[k] * synthesized_short_term_residual[i - k]
+
+    # Step 3: Long-Term Analysis
+    pitch_lags = []
+    gain_factors = []
+    prediction_residual = np.zeros(frame_length)
 
     for subframe_start in range(0, frame_length, subframe_length):
-        curr_subframe = curr_frame_st_resd[subframe_start:subframe_start + subframe_length]
+        subframe_end = subframe_start + subframe_length
+        curr_subframe = synthesized_short_term_residual[subframe_start:subframe_end]
 
-        prev_d = np.zeros(120)  # Initialize with zeros
+        # Retrieve previous residual samples for pitch estimation
+        prev_residual_buffer = np.zeros(120)
         start_idx = max(0, subframe_start - 120)
-        slice_length = subframe_start - start_idx
+        buffer_length = subframe_start - start_idx
 
-        # Fill the last `slice_length` elements of `prev_d` with valid data
-        if slice_length > 0:
-            prev_d[-slice_length:] = prev_frame_st_resd[start_idx:subframe_start]
+        if buffer_length > 0:
+            prev_residual_buffer[-buffer_length:] = prev_short_term_residual[start_idx:subframe_start]
 
-        # Call RPE_subframe_slt_lte to estimate N and b
-        N, b = RPE_subframe_slt_lte(curr_subframe, prev_d)
+        # Estimate pitch lag and gain factor
+        pitch_lag, gain_factor = RPE_subframe_slt_lte(curr_subframe, prev_residual_buffer)
 
-        # Quantize gain factor (b)
-        b_quantized = quantize_gain_factor(b)
-        N_quantized = N
-        Nc_values_opt.append(N_quantized)
-        bc_values_opt.append(b_quantized)
-        b_dequantized = dequantize_gain_factor(b_quantized)
-        N_dequantized = N_quantized
-        # Prediction residual computation
-        predicted = np.zeros(subframe_length)
+        # Quantize gain factor
+        quantized_gain = quantize_gain_factor(gain_factor)
+        dequantized_gain = dequantize_gain_factor(quantized_gain)
+
+        # Store pitch lag and quantized gain factor
+        pitch_lags.append(pitch_lag)
+        gain_factors.append(quantized_gain)
+
+        # Compute prediction residual
+        predicted_signal = np.zeros(subframe_length)
         for n in range(subframe_length):
-            if n - N_dequantized >= 0:
-                predicted[n] = b_dequantized * \
-                    curr_frame_st_resd[subframe_start + n - N_dequantized]
-            else:
-                predicted[n] = 0.0
-        residual = curr_subframe - predicted
-        curr_frame_ex_full[subframe_start:subframe_start +
-                           subframe_length] = residual
+            if n - pitch_lag >= 0:
+                predicted_signal[n] = dequantized_gain * synthesized_short_term_residual[subframe_start + n - pitch_lag]
+        
+        residual_signal = curr_subframe - predicted_signal
+        prediction_residual[subframe_start:subframe_end] = residual_signal
 
-    return np.array(LARc), np.array(Nc_values_opt), np.array(bc_values_opt), curr_frame_ex_full, curr_frame_st_resd
+    return np.array(LARc), np.array(pitch_lags), np.array(gain_factors), prediction_residual, synthesized_short_term_residual
 
 
 def RPE_frame_coder(input_speech_frame: np.ndarray, prev_residual_signal: np.ndarray) -> Tuple[str, np.ndarray]:
