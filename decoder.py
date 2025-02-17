@@ -1,7 +1,7 @@
-from bitstring import BitStream, ReadError
+from bitstring import BitStream
 import numpy as np
 from scipy.signal import lfilter
-from hw_utils import reflection_coeff_to_polynomial_coeff, polynomial_coeff_to_reflection_coeff
+from hw_utils import reflection_coeff_to_polynomial_coeff
 from typing import Tuple
 from encoder import dequantize_gain_factor, decode_LAR, decode_reflection_coeffs
 from utils import rpe_dequantize, reconstruct_excitation
@@ -26,7 +26,7 @@ def RPE_frame_st_decoder(LARc: np.ndarray, curr_frame_st_resd: np.ndarray) -> np
     beta = 28180 * (2 ** -15)
     for k in range(1, len(s)):
         sro[k] = s[k] + beta * sro[k - 1]
-    
+
     return sro.astype(np.int16)
 
 
@@ -64,7 +64,8 @@ def RPE_frame_slt_decoder(
             d_double_prime = 0
             if n - Nc[i] >= 0:
                 d_double_prime = prev_residual[n - Nc[i]]
-            reconstructed_residual[start_idx + n] = curr_subframe_ex[n] + dequantize_gain_factor(bc[i]) * d_double_prime
+            reconstructed_residual[start_idx + n] = curr_subframe_ex[n] + \
+                dequantize_gain_factor(bc[i]) * d_double_prime
 
     # Call the short-term decoder
     s0 = RPE_frame_st_decoder(LARc, reconstructed_residual)
@@ -120,11 +121,13 @@ def RPE_frame_decoder(frame_bitstream: str, prev_residual: np.ndarray) -> Tuple[
         )
 
         # Dequantize x_mcs and Mc
-        dequantized_subseq = rpe_dequantize(quantized_subseq, quantized_max_index)
+        dequantized_subseq = rpe_dequantize(
+            quantized_subseq, quantized_max_index)
 
         # Reconstruct excitation signal
         excitation = reconstruct_excitation(dequantized_subseq, selected_index)
-        excitation_signal[(subframe_idx * subframe_size):((subframe_idx + 1) * subframe_size)] = excitation
+        excitation_signal[(subframe_idx * subframe_size)
+                           :((subframe_idx + 1) * subframe_size)] = excitation
 
     # Step 2: Decode using RPE_frame_slt_decoder
     reconstructed_signal, curr_residual = RPE_frame_slt_decoder(
@@ -132,5 +135,3 @@ def RPE_frame_decoder(frame_bitstream: str, prev_residual: np.ndarray) -> Tuple[
     )
 
     return reconstructed_signal, curr_residual
-
-

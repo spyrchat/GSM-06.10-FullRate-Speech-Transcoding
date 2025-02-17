@@ -36,7 +36,6 @@ def quantize_gain_factor(b: float) -> int:
         return 3
 
 
-
 def decode_reflection_coeffs(LAR_decoded: np.ndarray) -> np.ndarray:
     """
     Decode LAR' coefficients to reflection coefficients r'(i) using GSM 06.10 (equation 3.5).
@@ -157,7 +156,7 @@ def xm_select(input_signal: np.ndarray) -> tuple[np.ndarray, int]:
     num_samples = 13  # Length of each sub-sequence
     signal_length = len(input_signal)  # Length of the input signal
 
-    # FIR Filter `H` for pre-processing (as per ETSI GSM 06.10)
+    # FIR Filter
     fir_filter = np.array([-134, -374, 0, 2054, 5741, 8192,
                            5741, 2054, 0, -374, -134]) / (2**13)
 
